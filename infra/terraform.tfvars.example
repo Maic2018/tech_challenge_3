@@ -1,0 +1,8 @@
+# Copie para terraform.tfvars (arquivo ignorado pelo git) e ajuste se precisar.
+# NÃO coloque senhas aqui: a senha do banco é gerada pelo Terraform (random_password).
+aws_region   = "us-east-1"
+project_name = "togglemaster"
+
+# AWS Academy: deixe vazio. A LabRole é lida automaticamente via data source.
+# Conta pessoal: informe o ARN de uma role própria para o EKS/nodes.
+# lab_role_arn = "arn:aws:iam::123456789012:role/minha-role-eks"

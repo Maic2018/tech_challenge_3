@@ -7,9 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/go-redis/redis/v8"
 	"github.com/joho/godotenv"
 )
@@ -20,7 +19,7 @@ var ctx = context.Background()
 // App struct para injeção de dependência
 type App struct {
 	RedisClient         *redis.Client
-	SqsSvc              *sqs.SQS
+	SqsClient           *sqs.Client
 	SqsQueueURL         string
 	HttpClient          *http.Client
 	FlagServiceURL      string
@@ -62,7 +61,7 @@ func main() {
 	}
 
 	// --- Inicializa Clientes ---
-	
+
 	// Cliente Redis
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
@@ -74,14 +73,15 @@ func main() {
 	}
 	log.Println("Conectado ao Redis com sucesso!")
 
-	// Cliente SQS (AWS SDK)
-	var sqsSvc *sqs.SQS
+	// Cliente SQS (AWS SDK v2). Credenciais vêm da cadeia padrão: no EKS, a LabRole
+	// do node via IMDS; no docker-compose, AWS_ACCESS_KEY_ID/AWS_ENDPOINT_URL (LocalStack).
+	var sqsClient *sqs.Client
 	if sqsQueueURL != "" {
-		sess, err := session.NewSession(&aws.Config{Region: aws.String(awsRegion)})
+		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
 		if err != nil {
-			log.Fatalf("Não foi possível criar sessão AWS: %v", err)
+			log.Fatalf("Não foi possível carregar a configuração AWS: %v", err)
 		}
-		sqsSvc = sqs.New(sess)
+		sqsClient = sqs.NewFromConfig(cfg)
 		log.Println("Cliente SQS inicializado com sucesso.")
 	}
 
@@ -93,7 +93,7 @@ func main() {
 	// Cria a instância da App
 	app := &App{
 		RedisClient:         rdb,
-		SqsSvc:              sqsSvc,
+		SqsClient:           sqsClient,
 		SqsQueueURL:         sqsQueueURL,
 		HttpClient:          httpClient,
 		FlagServiceURL:      flagSvcURL,
@@ -106,7 +106,15 @@ func main() {
 	mux.HandleFunc("/evaluate", app.evaluationHandler)
 
 	log.Printf("Serviço de Avaliação (Go) rodando na porta %s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

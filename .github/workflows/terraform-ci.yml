@@ -1,0 +1,49 @@
+# Valida a infraestrutura como código: formatação, init/validate dos dois root
+# modules e scan de misconfigurações (Trivy config, informativo).
+name: terraform-ci
+
+on:
+  push:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/terraform-ci.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/terraform-ci.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: fmt + validate (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [infra, infra/platform]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.5"
+      - name: terraform fmt -check
+        run: terraform -chdir=${{ matrix.dir }} fmt -check -recursive -diff
+      - name: terraform init (sem backend)
+        run: terraform -chdir=${{ matrix.dir }} init -backend=false -input=false
+      - name: terraform validate
+        run: terraform -chdir=${{ matrix.dir }} validate
+
+  iac-security:
+    name: IaC security scan (Trivy config)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy config (misconfigurações no Terraform, informativo)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          severity: HIGH,CRITICAL
+          exit-code: "0"
+          format: table

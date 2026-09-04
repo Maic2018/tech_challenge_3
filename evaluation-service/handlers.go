@@ -4,7 +4,12 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 )
+
+// flagNamePattern: allowlist estrita para o nome da flag (evita SSRF/path traversal
+// ao montar a URL dos serviços internos a partir de entrada do usuário).
+var flagNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
 type EvaluationResponse struct {
 	FlagName string `json:"flag_name"`
@@ -12,33 +17,45 @@ type EvaluationResponse struct {
 	Result   bool   `json:"result"`
 }
 
-func (a *App) healthHandler(w http.ResponseWriter, r *http.Request) {
+// writeJSON serializa a resposta e registra falhas de escrita (nenhum erro ignorado)
+func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("Erro ao escrever resposta JSON: %v", err)
+	}
+}
+
+func (a *App) healthHandler(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (a *App) evaluationHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	// 1. Parsear os query parameters
 	userID := r.URL.Query().Get("user_id")
 	flagName := r.URL.Query().Get("flag_name")
 
 	if userID == "" || flagName == "" {
+		w.Header().Set("Content-Type", "application/json")
 		http.Error(w, `{"error": "user_id e flag_name são obrigatórios"}`, http.StatusBadRequest)
+		return
+	}
+	if !flagNamePattern.MatchString(flagName) {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, `{"error": "flag_name inválido: use apenas letras, números, _ e - (até 100 caracteres)"}`, http.StatusBadRequest)
 		return
 	}
 
 	// 2. Obter a decisão (lógica de cache/serviço está em evaluator.go)
 	result, err := a.getDecision(userID, flagName)
 	if err != nil {
-		// Se o erro for "não encontrado", retornamos 'false' (comportamento seguro)
+		// Se o erro for "não encontrado", retornamos false (comportamento seguro)
 		if _, ok := err.(*NotFoundError); ok {
 			result = false
 		} else {
 			// Outros erros (serviços offline, etc)
 			log.Printf("Erro ao avaliar flag '%s': %v", flagName, err)
+			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error": "Erro interno ao avaliar a flag"}`, http.StatusBadGateway)
 			return
 		}
@@ -49,8 +66,7 @@ func (a *App) evaluationHandler(w http.ResponseWriter, r *http.Request) {
 	go a.sendEvaluationEvent(userID, flagName, result)
 
 	// 4. Retornar a resposta
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(EvaluationResponse{
+	writeJSON(w, http.StatusOK, EvaluationResponse{
 		FlagName: flagName,
 		UserID:   userID,
 		Result:   result,

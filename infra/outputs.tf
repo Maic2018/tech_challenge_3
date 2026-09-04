@@ -1,57 +1,107 @@
-# Após o terraform apply, esses valores aparecem no terminal
-# São as "strings de conexão" que você vai usar nos Secrets do Kubernetes
+# Após o terraform apply, estes valores são lidos por infra/platform (via
+# terraform_remote_state) e pelos scripts. Valores sensíveis só saem com
+# `terraform output -raw <nome>`.
 
-output "auth_db_endpoint" {
-  value       = aws_db_instance.auth.endpoint
-  description = "Endpoint do banco do auth-service"
+output "aws_account_id" {
+  value = data.aws_caller_identity.current.account_id
 }
 
-output "flag_db_endpoint" {
-  value       = aws_db_instance.flag.endpoint
-  description = "Endpoint do banco do flag-service"
+output "aws_region" {
+  value = var.aws_region
 }
 
-output "targeting_db_endpoint" {
-  value       = aws_db_instance.targeting.endpoint
-  description = "Endpoint do banco do targeting-service"
+output "lab_role_arn" {
+  value       = local.role_arn
+  description = "Role associada ao cluster e aos nodes"
 }
 
-output "redis_endpoint" {
-  value       = aws_elasticache_cluster.redis.cache_nodes[0].address
-  description = "Endpoint do Redis (ElastiCache)"
-}
-
-output "sqs_url" {
-  value       = aws_sqs_queue.events.url
-  description = "URL da fila SQS"
-}
-
-output "sqs_arn" {
-  value       = aws_sqs_queue.events.arn
-  description = "ARN da fila SQS"
-}
-
-output "dynamodb_table" {
-  value       = aws_dynamodb_table.analytics.name
-  description = "Nome da tabela DynamoDB"
-}
-
-output "ecr_urls" {
-  value       = { for k, v in aws_ecr_repository.services : k => v.repository_url }
-  description = "URLs dos repositórios ECR"
-}
-
+# ─── EKS ────────────────────────────────────────────────────────────────────
 output "eks_cluster_name" {
-  value       = aws_eks_cluster.main.name
-  description = "Nome do cluster EKS"
+  value = module.eks.cluster_name
 }
 
 output "eks_cluster_endpoint" {
-  value       = aws_eks_cluster.main.endpoint
-  description = "Endpoint da API do cluster EKS"
+  value = module.eks.cluster_endpoint
 }
 
 output "eks_cluster_status" {
-  value       = aws_eks_cluster.main.status
-  description = "Status do cluster"
+  value = module.eks.cluster_status
+}
+
+output "eks_cluster_version" {
+  value = module.eks.cluster_version
+}
+
+# ─── Bancos ─────────────────────────────────────────────────────────────────
+output "db_username" {
+  value = var.db_username
+}
+
+output "db_password" {
+  value     = random_password.db.result
+  sensitive = true
+}
+
+output "db_hosts" {
+  value       = module.rds.addresses
+  description = "Host (sem porta) de cada RDS, por serviço: auth, flag, targeting"
+}
+
+output "db_names" {
+  value = local.databases
+}
+
+output "db_port" {
+  value = module.rds.port
+}
+
+output "auth_db_endpoint" {
+  value = module.rds.endpoints["auth"]
+}
+
+output "flag_db_endpoint" {
+  value = module.rds.endpoints["flag"]
+}
+
+output "targeting_db_endpoint" {
+  value = module.rds.endpoints["targeting"]
+}
+
+output "redis_endpoint" {
+  value = module.elasticache.endpoint
+}
+
+output "redis_port" {
+  value = module.elasticache.port
+}
+
+output "dynamodb_table" {
+  value = module.dynamodb.table_name
+}
+
+output "secrets_manager_secret_arn" {
+  value = var.create_secrets_manager_secret ? aws_secretsmanager_secret.db[0].arn : null
+}
+
+# ─── Mensageria ─────────────────────────────────────────────────────────────
+output "sqs_url" {
+  value = module.sqs.queue_url
+}
+
+output "sqs_arn" {
+  value = module.sqs.queue_arn
+}
+
+output "sqs_dlq_url" {
+  value = module.sqs.dlq_url
+}
+
+# ─── ECR ────────────────────────────────────────────────────────────────────
+output "ecr_registry" {
+  value       = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+  description = "Registry usado pelo CI: <registry>/togglemaster/<serviço>:<tag>"
+}
+
+output "ecr_urls" {
+  value = module.ecr.repository_urls
 }

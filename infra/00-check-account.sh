@@ -1,46 +1,22 @@
 #!/bin/bash
-# infra/00-check-account.sh
-# Detecta o account ID atual do Academy e atualiza o terraform.tfvars com o
-# ARN correto da LabRole. Compatível com Windows (Git Bash) e macOS.
+# infra/00-check-account.sh — Mostra a identidade AWS atual e confere se a LabRole
+# existe. Não edita mais o terraform.tfvars: a LabRole é lida pelo Terraform via
+# data source (aws_iam_role), então nada muda entre sessões do Academy.
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../scripts/common.sh"
+require_cmd aws
 
-set -e
+log "Identidade AWS atual:"
+aws sts get-caller-identity --output table
+ACCOUNT_ID="$(aws_account_id)"
 
-echo ">>> Verificando identidade AWS atual..."
-ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
-echo ">>> Account ID atual: $ACCOUNT_ID"
-
-echo ">>> Buscando ARN da LabRole..."
-LAB_ROLE_ARN=$(aws iam get-role --role-name LabRole --query 'Role.Arn' --output text)
-echo ">>> LabRole ARN: $LAB_ROLE_ARN"
-
-TFVARS_FILE="terraform.tfvars"
-
-if [ ! -f "$TFVARS_FILE" ]; then
-  echo "!!! terraform.tfvars não encontrado nesta pasta."
-  echo "!!! Rode este script de dentro de infra/"
-  exit 1
-fi
-
-# Compatibilidade sed: macOS precisa de '' como argumento extra, Linux não
-OS="$(uname -s)"
-if [ "$OS" = "Darwin" ]; then
-  SED_INPLACE="sed -i ''"
+ROLE_NAME="${LAB_ROLE_NAME:-LabRole}"
+if ARN="$(aws iam get-role --role-name "$ROLE_NAME" --query Role.Arn --output text 2>/dev/null)"; then
+  log "$ROLE_NAME encontrada: $ARN (usada pelo EKS e pelos nodes via data source)"
 else
-  SED_INPLACE="sed -i"
+  warn "$ROLE_NAME não encontrada. Em conta pessoal, defina lab_role_arn em infra/terraform.tfvars."
 fi
 
-if grep -q "^lab_role_arn" "$TFVARS_FILE"; then
-  $SED_INPLACE "s|^lab_role_arn.*|lab_role_arn = \"$LAB_ROLE_ARN\"|" "$TFVARS_FILE"
-else
-  echo "lab_role_arn = \"$LAB_ROLE_ARN\"" >> "$TFVARS_FILE"
-fi
-
-echo ">>> terraform.tfvars atualizado com sucesso:"
-grep "lab_role_arn" "$TFVARS_FILE"
-
-echo ""
-echo ">>> Salvando ACCOUNT_ID em ../account_id.txt para os outros scripts usarem"
-echo "$ACCOUNT_ID" > ../account_id.txt
-
-echo ""
-echo ">>> Pronto. Pode rodar: terraform init && terraform plan && terraform apply -auto-approve"
+echo "$ACCOUNT_ID" > "$REPO_ROOT/account_id.txt"
+log "Account ID $ACCOUNT_ID salvo em account_id.txt (ignorado pelo git)"
+log "Bucket de state esperado: $(tfstate_bucket)"

@@ -1,51 +1,28 @@
 #!/bin/bash
-# update-api-key.sh
-# Roda DEPOIS que o auth-service estiver de pé e as migrations aplicadas.
-# Cria uma API key real via /auth/admin/keys, atualiza o secret do
-# evaluation-service automaticamente, e reinicia o deployment.
-#
-# Uso: bash update-api-key.sh <URL_DO_LOAD_BALANCER>
-# Ex:  bash update-api-key.sh http://abc123.elb.amazonaws.com
+# update-api-key.sh — Cria uma chave de API adicional (para testes/clientes) via
+# POST /auth/admin/keys, usando a MASTER_KEY gerada pelo Terraform (lida do Secret
+# do cluster, nunca hardcoded). A chave interna do evaluation-service já é
+# registrada pelo run-migrations.sh; este script é opcional.
+# Uso: bash update-api-key.sh <URL_DO_LOAD_BALANCER> [nome-da-chave]
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/common.sh"
+require_cmd kubectl curl
 
-set -e
+LB="${1:?Uso: bash update-api-key.sh <URL_DO_LOAD_BALANCER> [nome-da-chave]}"
+NAME="${2:-tech-challenge-key}"
 
-LB=$1
-if [ -z "$LB" ]; then
-  echo "Uso: bash update-api-key.sh <URL_DO_LOAD_BALANCER>"
-  echo "Pegue a URL com: kubectl get ingress -n togglemaster"
-  exit 1
-fi
+MASTER_KEY="$(kubectl -n "$APP_NAMESPACE" get secret auth-service-secret -o jsonpath='{.data.MASTER_KEY}' | base64 -d)"
+[ -n "$MASTER_KEY" ] || die "MASTER_KEY não encontrada no Secret auth-service-secret"
 
-echo ">>> Criando API key via $LB/auth/admin/keys"
-RESPONSE=$(curl -s --request POST \
-  --url "$LB/auth/admin/keys" \
-  --header 'Authorization: Bearer master123' \
+log "Criando chave '$NAME' via $LB/auth/admin/keys"
+RESPONSE="$(curl -s --request POST --url "$LB/auth/admin/keys" \
+  --header "Authorization: Bearer $MASTER_KEY" \
   --header 'Content-Type: application/json' \
-  --data '{"name": "tech-challenge-key"}')
+  --data "{\"name\": \"$NAME\"}")"
 
-echo ">>> Resposta: $RESPONSE"
+API_KEY="$(echo "$RESPONSE" | grep -o '"key":"[^"]*' | cut -d'"' -f4 || true)"
+[ -n "$API_KEY" ] || die "Não foi possível criar a chave. Resposta: $RESPONSE"
 
-API_KEY=$(echo "$RESPONSE" | grep -o '"key":"[^"]*' | cut -d'"' -f4)
-
-if [ -z "$API_KEY" ]; then
-  echo "!!! Não foi possível extrair a API key. Verifique se o auth-service está de pé e as migrations rodaram."
-  exit 1
-fi
-
-echo ">>> API key gerada: $API_KEY"
-echo "$API_KEY" > api_key.txt
-echo ">>> Salva em api_key.txt para reutilizar nos testes"
-
-API_KEY_B64=$(echo -n "$API_KEY" | base64 | tr -d '\n')
-
-echo ">>> Atualizando secret do evaluation-service"
-kubectl patch secret evaluation-service-secret -n togglemaster \
-  --type merge \
-  -p "{\"data\":{\"SERVICE_API_KEY\":\"${API_KEY_B64}\"}}"
-
-echo ">>> Reiniciando evaluation-service"
-kubectl rollout restart deployment/evaluation-service -n togglemaster
-kubectl rollout status deployment/evaluation-service -n togglemaster --timeout=120s
-
-echo ">>> Pronto. Use esta key nos seus testes:"
+printf '%s\n' "$API_KEY" > "$REPO_ROOT/api_key.txt"
+log "Chave criada e salva em api_key.txt (ignorado pelo git):"
 echo "$API_KEY"

@@ -8,6 +8,8 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      # md5: evita falha de SCRAM-SHA-256 no libpq de hosts ARM64 (Mac M-series)
+      POSTGRES_HOST_AUTH_METHOD: md5
       POSTGRES_DB: authdb
     ports:
       - "5433:5432"
@@ -21,6 +23,8 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      # md5: evita falha de SCRAM-SHA-256 no libpq de hosts ARM64 (Mac M-series)
+      POSTGRES_HOST_AUTH_METHOD: md5
       POSTGRES_DB: flagdb
     ports:
       - "5434:5432"
@@ -34,6 +38,8 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
+      # md5: evita falha de SCRAM-SHA-256 no libpq de hosts ARM64 (Mac M-series)
+      POSTGRES_HOST_AUTH_METHOD: md5
       POSTGRES_DB: targetingdb
     ports:
       - "5435:5432"

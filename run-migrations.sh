@@ -1,92 +1,76 @@
 #!/bin/bash
-# run-migrations.sh
-# Cria as tabelas SQL nos 3 bancos RDS usando os init.sql que ficam
+# run-migrations.sh — Cria as tabelas nos 3 bancos RDS e registra a chave de API
+# interna do evaluation-service. Roda como um Job dentro do cluster (os bancos
+# estão em subnets privadas) e lê as credenciais direto dos Secrets criados pelo
+# Terraform: nenhuma senha passa por arquivo ou pela linha de comando.
+# Uso: bash run-migrations.sh
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/common.sh"
+require_cmd kubectl
+cd "$REPO_ROOT"
+NS="$APP_NAMESPACE"
 
-set -e
-
-AUTH_SQL="auth-service/db/init.sql"
-FLAG_SQL="flag-service/db/init.sql"
-TARGETING_SQL="targeting-service/db/init.sql"
-
-# Valida que está na raiz certa
-for f in "$AUTH_SQL" "$FLAG_SQL" "$TARGETING_SQL"; do
-  if [ ! -f "$f" ]; then
-    echo "!!! Arquivo não encontrado: $f"
-    echo "!!! Rode da RAIZ do projeto (onde ficam as pastas auth-service/, flag-service/, infra/)"
-    echo "!!! Pasta atual: $(pwd)"
-    exit 1
-  fi
+for f in auth-service/db/init.sql flag-service/db/init.sql targeting-service/db/init.sql; do
+  [ -f "$f" ] || die "Arquivo não encontrado: $f (rode da raiz do projeto)"
 done
 
-echo ">>> Lendo endpoints do Terraform..."
-AUTH_DB=$(cd infra && terraform output -raw auth_db_endpoint | cut -d: -f1)
-FLAG_DB=$(cd infra && terraform output -raw flag_db_endpoint | cut -d: -f1)
-TARGETING_DB=$(cd infra && terraform output -raw targeting_db_endpoint | cut -d: -f1)
-DB_PASS="SENHA_REMOVIDA_DO_HISTORICO"
+log "Publicando os SQLs em um ConfigMap..."
+kubectl -n "$NS" create configmap migration-sqls \
+  --from-file=init-auth.sql=auth-service/db/init.sql \
+  --from-file=init-flag.sql=flag-service/db/init.sql \
+  --from-file=init-targeting.sql=targeting-service/db/init.sql \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-echo ">>> auth_db host:  $AUTH_DB"
-echo ">>> flag_db host:  $FLAG_DB"
-echo ">>> targeting_db host: $TARGETING_DB"
-
-echo ""
-echo ">>> Removendo pod/configmap antigos, se existirem..."
-kubectl delete pod psql-migrator -n togglemaster --force --grace-period=0 --ignore-not-found=true
-kubectl delete configmap migration-sqls -n togglemaster --ignore-not-found=true
-
-echo ">>> Criando ConfigMap com os 3 SQLs..."
-kubectl create configmap migration-sqls -n togglemaster \
-  --from-file=init-auth.sql="$AUTH_SQL" \
-  --from-file=init-flag.sql="$FLAG_SQL" \
-  --from-file=init-targeting.sql="$TARGETING_SQL"
-
-echo ">>> Criando pod de migração..."
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: Pod
+kubectl -n "$NS" delete job db-migrations --ignore-not-found >/dev/null
+log "Criando Job db-migrations..."
+kubectl -n "$NS" apply -f - <<'__K8S__'
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: psql-migrator
-  namespace: togglemaster
+  name: db-migrations
 spec:
-  restartPolicy: Never
-  containers:
-  - name: psql
-    image: postgres:15
-    command: ["/bin/sh", "-c"]
-    args:
-      - |
-        echo "=== auth_db ===" &&
-        psql "postgres://postgres:${DB_PASS}@${AUTH_DB}:5432/auth_db?sslmode=require" -f /sqls/init-auth.sql &&
-        echo "=== flag_db ===" &&
-        psql "postgres://postgres:${DB_PASS}@${FLAG_DB}:5432/flag_db?sslmode=require" -f /sqls/init-flag.sql &&
-        echo "=== targeting_db ===" &&
-        psql "postgres://postgres:${DB_PASS}@${TARGETING_DB}:5432/targeting_db?sslmode=require" -f /sqls/init-targeting.sql &&
-        echo "=== Migrations concluídas com sucesso ==="
-    volumeMounts:
-      - name: sqls
-        mountPath: /sqls
-  volumes:
-    - name: sqls
-      configMap:
-        name: migration-sqls
-EOF
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 900
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: psql
+          image: postgres:16-alpine
+          env:
+            - name: AUTH_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: auth-service-secret, key: DATABASE_URL } }
+            - name: FLAG_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: flag-service-secret, key: DATABASE_URL } }
+            - name: TARGETING_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: targeting-service-secret, key: DATABASE_URL } }
+            - name: SERVICE_API_KEY
+              valueFrom: { secretKeyRef: { name: evaluation-service-secret, key: SERVICE_API_KEY } }
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              echo "=== auth_db ===";      psql "$AUTH_DATABASE_URL"      -v ON_ERROR_STOP=1 -f /sqls/init-auth.sql
+              echo "=== flag_db ===";      psql "$FLAG_DATABASE_URL"      -v ON_ERROR_STOP=1 -f /sqls/init-flag.sql
+              echo "=== targeting_db ==="; psql "$TARGETING_DATABASE_URL" -v ON_ERROR_STOP=1 -f /sqls/init-targeting.sql
+              echo "=== chave interna do evaluation-service (hash SHA-256) ==="
+              HASH=$(printf '%s' "$SERVICE_API_KEY" | sha256sum | awk '{print $1}')
+              psql "$AUTH_DATABASE_URL" -v ON_ERROR_STOP=1 \
+                -c "INSERT INTO api_keys (name, key_hash) VALUES ('evaluation-service', '$HASH') ON CONFLICT (key_hash) DO NOTHING;"
+              echo "=== Migrations concluídas ==="
+          volumeMounts:
+            - { name: sqls, mountPath: /sqls }
+      volumes:
+        - name: sqls
+          configMap: { name: migration-sqls }
+__K8S__
 
-echo ">>> Aguardando pod concluir (até 90s)..."
-for i in $(seq 1 18); do
-  PHASE=$(kubectl get pod psql-migrator -n togglemaster -o jsonpath='{.status.phase}' 2>/dev/null || echo "Pending")
-  echo "    Status: $PHASE (tentativa $i/18)"
-  if [ "$PHASE" = "Succeeded" ] || [ "$PHASE" = "Failed" ]; then
-    break
-  fi
-  sleep 5
-done
-
-echo ""
-echo ">>> Logs da migration:"
-kubectl logs -n togglemaster psql-migrator
-
-echo ""
-echo ">>> Limpando recursos temporários..."
-kubectl delete pod psql-migrator -n togglemaster --ignore-not-found=true
-kubectl delete configmap migration-sqls -n togglemaster --ignore-not-found=true
-
-echo ">>> Migrations concluídas."
+log "Aguardando o Job terminar (até 5 min)..."
+if kubectl -n "$NS" wait --for=condition=complete job/db-migrations --timeout=300s; then
+  kubectl -n "$NS" logs job/db-migrations
+  log "Migrations concluídas."
+else
+  warn "Job não concluiu. Logs:"
+  kubectl -n "$NS" logs job/db-migrations --all-containers 2>/dev/null || true
+  kubectl -n "$NS" describe job db-migrations | tail -20 || true
+  exit 1
+fi

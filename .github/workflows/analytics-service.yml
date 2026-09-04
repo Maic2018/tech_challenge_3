@@ -1,0 +1,33 @@
+# CI + DevSecOps do analytics-service. Roda em todo Pull Request e push na main que toque
+# neste serviço. A lógica está no workflow reutilizável _service-ci.yml.
+name: analytics-service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "analytics-service/**"
+      - ".github/workflows/analytics-service.yml"
+      - ".github/workflows/_service-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "analytics-service/**"
+      - ".github/workflows/analytics-service.yml"
+      - ".github/workflows/_service-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-analytics-service-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_service-ci.yml
+    with:
+      service: analytics-service
+      language: python
+    secrets: inherit
