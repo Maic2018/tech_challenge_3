@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: togglemaster
+  labels:
+    app: analytics-service
+    app.kubernetes.io/part-of: togglemaster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: analytics-service
+          # Atualizado automaticamente pelo pipeline de CI (scripts/update-image-tag.sh)
+          image: 331107561604.dkr.ecr.us-east-1.amazonaws.com/togglemaster/analytics-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8005
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          env:
+            - name: PORT
+              value: "8005"
+            - name: AWS_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: togglemaster-config
+                  key: AWS_REGION
+            - name: AWS_SQS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: analytics-service-secret
+                  key: AWS_SQS_URL
+            - name: AWS_DYNAMODB_TABLE
+              valueFrom:
+                configMapKeyRef:
+                  name: togglemaster-config
+                  key: AWS_DYNAMODB_TABLE
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8005
+            initialDelaySeconds: 5
+            periodSeconds: 10

@@ -1,68 +1,60 @@
 #!/bin/bash
-# destroy-all.sh
-# Destroy seguro e completo. Remove o Load Balancer criado pelo Helm ANTES
-# de rodar terraform destroy — resolve o erro recorrente de DependencyViolation
-# na subnet/Internet Gateway. Compatível com Windows (Git Bash) e macOS.
+# destroy-all.sh — Remove tudo na ordem certa:
+#   1) plataforma (o Helm remove ArgoCD/ingress e, com eles, os Load Balancers)
+#   2) infraestrutura (EKS, RDS, Redis, VPC...)
+#   3) opcional: bucket do state (--delete-state-bucket)
+# Uso: bash destroy-all.sh [--delete-state-bucket]
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/common.sh"
+cd "$REPO_ROOT"
+require_cmd aws terraform
 
+DELETE_BUCKET=0
+[ "${1:-}" = "--delete-state-bucket" ] && DELETE_BUCKET=1
+BUCKET="$(tfstate_bucket)"
 
-set -e
-
-echo "================================================================"
-echo " PASSO 1/4 — Removendo Nginx Ingress (e o Load Balancer com ele)"
-echo "================================================================"
-
-# Tenta desinstalar o Helm release se o kubectl ainda responder
-if kubectl cluster-info &>/dev/null 2>&1; then
-  if helm list -n ingress-nginx 2>/dev/null | grep -q ingress-nginx; then
-    echo ">>> Desinstalando ingress-nginx via Helm..."
-    helm uninstall ingress-nginx -n ingress-nginx
-    echo ">>> Aguardando 90s para a AWS remover o Load Balancer e suas ENIs..."
-    echo ">>> (não pule essa espera — as subnets só liberam depois que as ENIs somem)"
-    sleep 90
+step "PASSO 1/4 — Plataforma (ArgoCD, Ingress NGINX, Metrics Server, Secrets)"
+if aws s3api head-object --bucket "$BUCKET" --key platform/terraform.tfstate >/dev/null 2>&1; then
+  bash scripts/tf-init.sh platform
+  if terraform -chdir=infra/platform destroy -input=false -auto-approve; then
+    log "Aguardando 60s para a AWS liberar Load Balancers e ENIs..."
+    sleep 60
   else
-    echo ">>> Nenhum release ingress-nginx encontrado. Pulando."
+    warn "Destroy da plataforma falhou (cluster já removido?). Seguindo: os recursos morrem com o cluster."
   fi
 else
-  echo ">>> kubectl não responde (cluster pode já estar fora). Pulando Helm."
+  log "Sem state da plataforma. Pulando."
 fi
 
-echo ""
-echo "================================================================"
-echo " PASSO 2/4 — Verificando Load Balancers pendentes"
-echo "================================================================"
-echo ">>> Load Balancers ativos (elbv2 — NLB/ALB):"
-aws elbv2 describe-load-balancers --region us-east-1 \
-  --query 'LoadBalancers[*].[LoadBalancerName,DNSName]' \
-  --output table 2>/dev/null || echo "(nenhum ou permissão negada)"
+step "PASSO 2/4 — Load Balancers ainda ativos (informativo)"
+aws elbv2 describe-load-balancers --region "$AWS_REGION" \
+  --query 'LoadBalancers[*].[LoadBalancerName,DNSName]' --output table 2>/dev/null || true
+aws elb describe-load-balancers --region "$AWS_REGION" \
+  --query 'LoadBalancerDescriptions[*].LoadBalancerName' --output table 2>/dev/null || true
 
-echo ""
-echo ">>> Load Balancers clássicos (ELB):"
-aws elb describe-load-balancers --region us-east-1 \
-  --query 'LoadBalancerDescriptions[*].LoadBalancerName' \
-  --output table 2>/dev/null || echo "(nenhum ou permissão negada)"
+step "PASSO 3/4 — Infraestrutura (terraform destroy)"
+bash scripts/tf-init.sh infra
+terraform -chdir=infra destroy -input=false -auto-approve
+# O state da plataforma fica órfão (tudo que ele descrevia morreu com o cluster)
+aws s3 rm "s3://${BUCKET}/platform/terraform.tfstate" >/dev/null 2>&1 || true
 
-echo ""
-echo "!!! Se algum Load Balancer do projeto aparecer acima, delete manualmente:"
-echo "!!!   aws elbv2 delete-load-balancer --load-balancer-arn ARN --region us-east-1"
-echo "!!!   aws elb delete-load-balancer --load-balancer-name NOME --region us-east-1"
-echo ""
-read -p ">>> Pressione ENTER quando confirmar que não há LBs pendentes (ou Ctrl+C para cancelar)..."
-
-echo ""
-echo "================================================================"
-echo " PASSO 3/4 — Terraform destroy"
-echo "================================================================"
-cd infra
-terraform destroy -auto-approve
-cd ..
-
-echo ""
-echo "================================================================"
-echo " PASSO 4/4 — Limpando arquivos locais de estado"
-echo "================================================================"
-rm -f account_id.txt api_key.txt
-rm -f infra/k8s/secrets.yaml
-echo ">>> Arquivos locais limpos."
-
-echo ""
-echo ">>> Destroy completo! Infra removida. Pronto para recriar com: bash run-all.sh"
+step "PASSO 4/4 — Limpeza local"
+rm -f account_id.txt api_key.txt infra/tfplan
+if [ "$DELETE_BUCKET" -eq 1 ]; then
+  log "Removendo todas as versões dos objetos e o bucket $BUCKET..."
+  TMP="$(mktemp)"
+  for kind in Versions DeleteMarkers; do
+    while :; do
+      aws s3api list-object-versions --bucket "$BUCKET" --max-keys 500 --output json \
+        --query "{Objects: ${kind}[].{Key:Key,VersionId:VersionId}, Quiet: \`true\`}" > "$TMP"
+      grep -q '"Key"' "$TMP" || break
+      aws s3api delete-objects --bucket "$BUCKET" --delete "file://$TMP" >/dev/null
+    done
+  done
+  rm -f "$TMP"
+  aws s3api delete-bucket --bucket "$BUCKET"
+  log "Bucket removido."
+else
+  log "Bucket de state mantido ($BUCKET). Use --delete-state-bucket para removê-lo."
+fi
+log "Destroy completo. Para recriar: bash run-all.sh"

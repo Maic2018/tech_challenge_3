@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: togglemaster-services
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    # Uma Application por pasta em gitops/apps/* (auth, flag, targeting, evaluation, analytics)
+    - git:
+        repoURL: ${repo_url}
+        revision: ${revision}
+        directories:
+          - path: gitops/apps/*
+  template:
+    metadata:
+      name: '{{ .path.basename }}'
+      labels:
+        app.kubernetes.io/part-of: togglemaster
+    spec:
+      project: default
+      source:
+        repoURL: ${repo_url}
+        targetRevision: ${revision}
+        path: '{{ .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ${namespace}
+      syncPolicy:
+        automated:
+          prune: true    # remove do cluster o que saiu do git
+          selfHeal: true # desfaz alteracoes manuais (kubectl apply local)
+        syncOptions:
+          - CreateNamespace=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m

@@ -1,0 +1,33 @@
+# CI + DevSecOps do flag-service. Roda em todo Pull Request e push na main que toque
+# neste serviço. A lógica está no workflow reutilizável _service-ci.yml.
+name: flag-service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "flag-service/**"
+      - ".github/workflows/flag-service.yml"
+      - ".github/workflows/_service-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "flag-service/**"
+      - ".github/workflows/flag-service.yml"
+      - ".github/workflows/_service-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ci-flag-service-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_service-ci.yml
+    with:
+      service: flag-service
+      language: python
+    secrets: inherit

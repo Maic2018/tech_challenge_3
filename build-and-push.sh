@@ -1,43 +1,28 @@
 #!/bin/bash
-# build-and-push.sh
-# Builda e publica as 5 imagens no ECR.
-# Compatível com Windows (Git Bash) e macOS.
+# build-and-push.sh — FALLBACK LOCAL (sem os gates de DevSecOps).
+# O caminho oficial é o pipeline do GitHub Actions (.github/workflows/<serviço>.yml).
+# Builda e publica as 5 imagens no ECR com a tag do commit e atualiza gitops/.
+# Depois: git add gitops && git commit && git push  (o ArgoCD sincroniza sozinho).
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/common.sh"
+cd "$REPO_ROOT"
+require_cmd aws docker git
 
-set -e
+ACCOUNT_ID="$(aws_account_id)"
+ECR="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+TAG="v${APP_VERSION:-1.0.0}-$(git rev-parse --short=7 HEAD)"
+log "Registry: $ECR | Tag: $TAG"
 
-if [ ! -f "account_id.txt" ]; then
-  echo "!!! account_id.txt não encontrado."
-  echo "!!! Rode infra/00-check-account.sh primeiro."
-  exit 1
-fi
+aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR"
 
-ACCOUNT_ID=$(cat account_id.txt)
-REGION="us-east-1"
-ECR="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-
-echo ">>> Usando ECR: $ECR"
-
-# Login no ECR
-aws ecr get-login-password --region "$REGION" | \
-  docker login --username AWS --password-stdin "$ECR"
-
-SERVICES="auth-service flag-service targeting-service evaluation-service analytics-service"
-
-for svc in $SERVICES; do
-  if [ ! -d "./$svc" ]; then
-    echo "!!! Pasta ./$svc não encontrada. Está na raiz do projeto?"
-    exit 1
-  fi
-  echo ""
-  echo ">>> [$svc] Building..."
-  # --platform linux/amd64 garante que a imagem funcione nos nodes Linux do EKS
-  # mesmo que você esteja buildando num Mac M1/M2 (ARM)
-  docker build --platform linux/amd64 -t "$svc" "./$svc"
-  docker tag "$svc:latest" "$ECR/togglemaster/$svc:latest"
-  echo ">>> [$svc] Pushing..."
-  docker push "$ECR/togglemaster/$svc:latest"
-  echo ">>> [$svc] OK"
+for svc in "${SERVICES[@]}"; do
+  IMAGE="$ECR/${PROJECT_NAME}/${svc}:${TAG}"
+  log "[$svc] build (linux/amd64, mesma plataforma dos nodes EKS)..."
+  docker build --platform linux/amd64 -t "$IMAGE" "./$svc"
+  log "[$svc] push..."
+  docker push "$IMAGE"
+  bash scripts/update-image-tag.sh "$svc" "$IMAGE"
 done
 
-echo ""
-echo ">>> Todas as imagens publicadas em $ECR"
+log "Imagens publicadas com a tag $TAG e manifestos atualizados em gitops/."
+log "Agora: git add gitops && git commit -m \"gitops: $TAG\" && git push"

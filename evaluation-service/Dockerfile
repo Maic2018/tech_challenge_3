@@ -1,12 +1,15 @@
-FROM golang:1.21-alpine AS builder
+# Multi-stage: compila com o toolchain Go e roda em imagem distroless (sem shell,
+# sem gerenciador de pacotes, usuário não-root) — superfície mínima para o scan do Trivy.
+FROM golang:1.26-alpine AS builder
 WORKDIR /app
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY *.go ./
-RUN go mod tidy
-RUN CGO_ENABLED=0 GOOS=linux go build -o main .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/main .
 
-FROM alpine:3.19
+FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
-COPY --from=builder /app/main .
+COPY --from=builder /out/main /app/main
 EXPOSE 8004
-CMD ["./main"]
+USER nonroot:nonroot
+ENTRYPOINT ["/app/main"]

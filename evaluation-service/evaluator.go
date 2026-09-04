@@ -1,13 +1,13 @@
 package main
 
 import (
-	"crypto/sha1"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"hash/fnv"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -57,7 +57,9 @@ func (a *App) getCombinedFlagInfo(flagName string) (*CombinedFlagInfo, error) {
 	// 3. Salvar no Cache
 	jsonData, err := json.Marshal(info)
 	if err == nil {
-		a.RedisClient.Set(ctx, cacheKey, jsonData, CACHE_TTL).Err()
+		if err := a.RedisClient.Set(ctx, cacheKey, jsonData, CACHE_TTL).Err(); err != nil {
+			log.Printf("Aviso: não foi possível salvar a flag '%s' no cache: %v", flagName, err)
+		}
 	}
 
 	return info, nil
@@ -101,13 +103,14 @@ func (a *App) fetchFromServices(flagName string) (*CombinedFlagInfo, error) {
 
 // fetchFlag (função helper)
 func (a *App) fetchFlag(flagName string) (*Flag, error) {
-	url := fmt.Sprintf("%s/flags/%s", a.FlagServiceURL, flagName)
+	// flagName já passou pela allowlist do handler; PathEscape é defesa em profundidade.
+	endpoint := fmt.Sprintf("%s/flags/%s", a.FlagServiceURL, url.PathEscape(flagName))
 
 	apiKey := os.Getenv("SERVICE_API_KEY")
-	req, _ := http.NewRequest("GET", url, nil)
+	req, _ := http.NewRequest("GET", endpoint, nil) // #nosec G704 -- host fixo (config) + flagName validado por regex no handler
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := a.HttpClient.Do(req)
+	resp, err := a.HttpClient.Do(req) // #nosec G704 -- host fixo (config) + flagName validado por regex no handler
 	if err != nil {
 		return nil, fmt.Errorf("erro ao chamar flag-service: %w", err)
 	}
@@ -120,7 +123,7 @@ func (a *App) fetchFlag(flagName string) (*Flag, error) {
 		return nil, fmt.Errorf("flag-service retornou status %d", resp.StatusCode)
 	}
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	var flag Flag
 	if err := json.Unmarshal(body, &flag); err != nil {
 		return nil, fmt.Errorf("erro ao desserializar resposta do flag-service: %w", err)
@@ -129,12 +132,12 @@ func (a *App) fetchFlag(flagName string) (*Flag, error) {
 }
 
 func (a *App) fetchRule(flagName string) (*TargetingRule, error) {
-	url := fmt.Sprintf("%s/rules/%s", a.TargetingServiceURL, flagName)
-	apiKey := os.Getenv("SERVICE_API_KEY") // Usa a mesma chave
-	req, _ := http.NewRequest("GET", url, nil)
+	endpoint := fmt.Sprintf("%s/rules/%s", a.TargetingServiceURL, url.PathEscape(flagName))
+	apiKey := os.Getenv("SERVICE_API_KEY")          // Usa a mesma chave
+	req, _ := http.NewRequest("GET", endpoint, nil) // #nosec G704 -- host fixo (config) + flagName validado por regex no handler
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	resp, err := a.HttpClient.Do(req)
+	resp, err := a.HttpClient.Do(req) // #nosec G704 -- host fixo (config) + flagName validado por regex no handler
 	if err != nil {
 		return nil, fmt.Errorf("erro ao chamar targeting-service: %w", err)
 	}
@@ -147,7 +150,7 @@ func (a *App) fetchRule(flagName string) (*TargetingRule, error) {
 		return nil, fmt.Errorf("targeting-service retornou status %d", resp.StatusCode)
 	}
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	var rule TargetingRule
 	if err := json.Unmarshal(body, &rule); err != nil {
 		return nil, fmt.Errorf("erro ao desserializar resposta do targeting-service: %w", err)
@@ -186,15 +189,12 @@ func (a *App) runEvaluationLogic(info *CombinedFlagInfo, userID string) bool {
 	return false
 }
 
-func getDeterministicBucket(input string) int {
-	// Usamos SHA1 (rápido) e pegamos os primeiros 4 bytes
-	hasher := sha1.New()
-	hasher.Write([]byte(input))
-	hash := hasher.Sum(nil)
+func getDeterministicBucket(input string) uint32 {
+	// FNV-1a: hash não criptográfico, rápido e determinístico — suficiente para
+	// distribuir usuários em buckets (não é uso de segurança, então nada de SHA-1).
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(input))
 
-	// Converte 4 bytes para um uint32
-	val := binary.BigEndian.Uint32(hash[:4])
-
-	// Retorna o módulo 100
-	return int(val % 100)
+	// Bucket do usuário no intervalo 0-99
+	return hasher.Sum32() % 100
 }

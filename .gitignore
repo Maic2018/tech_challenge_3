@@ -1,5 +1,31 @@
-infra/.terraform/
+# ─── Terraform: state NUNCA no repositório (backend remoto S3) ───────────────
+**/.terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
+tfplan
+crash.log
+# valores locais (podem conter dados da conta); versionamos só o .example
+*.tfvars
+!*.tfvars.example
+backend.hcl
+
+# ─── Artefatos dos scripts (credenciais/ids locais) ─────────────────────────
+account_id.txt
+api_key.txt
+.env
+*.pem
+*.key
+
+# ─── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ─── IDE / SO ───────────────────────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
 .history
-*.tfstate.backup
+.DS_Store

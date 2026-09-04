@@ -1,0 +1,7 @@
+[flake8]
+# Linter dos serviços Python (job "Linter / Static Analysis" do pipeline)
+max-line-length = 120
+extend-ignore =
+    # regras puramente de espaçamento entre blocos (estilo do time)
+    E302,E305
+exclude = .git,__pycache__,.venv,venv,build,dist,node_modules
