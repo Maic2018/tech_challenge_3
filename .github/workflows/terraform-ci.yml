@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 env:
-  TRIVY_VERSION: "0.58.1"
+  TRIVY_VERSION: "0.74.0"
 
 permissions:
   contents: read
@@ -47,7 +47,9 @@ jobs:
       # release (URL fixa, sem API), o que torna o pipeline deterministico.
       - name: Instalar Trivy
         run: |
-          curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"             | tar -xzf - -C /tmp trivy
+          URL="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --fail --show-error --location --silent -o /tmp/trivy.tar.gz "$URL"
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
           sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
           trivy --version
 
