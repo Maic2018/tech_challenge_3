@@ -23,7 +23,7 @@ spec:
       containers:
         - name: analytics-service
           # Atualizado automaticamente pelo pipeline de CI (scripts/update-image-tag.sh)
-          image: 331107561604.dkr.ecr.us-east-1.amazonaws.com/togglemaster/analytics-service:latest
+          image: 048432717457.dkr.ecr.us-east-1.amazonaws.com/togglemaster/analytics-service:v1.0.0-b236f9f
           imagePullPolicy: Always
           ports:
             - containerPort: 8005
