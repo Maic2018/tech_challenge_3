@@ -11,6 +11,9 @@ on:
     paths: ["infra/**", ".github/workflows/terraform-ci.yml"]
   workflow_dispatch:
 
+env:
+  TRIVY_VERSION: "0.58.1"
+
 permissions:
   contents: read
 
@@ -39,11 +42,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # O setup-trivy da action oficial resolve o download pela API do GitHub e
+      # esbarra em rate limit nos runners. Baixamos o binario direto do asset da
+      # release (URL fixa, sem API), o que torna o pipeline deterministico.
+      - name: Instalar Trivy
+        run: |
+          curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"             | tar -xzf - -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+          trivy --version
+
       - name: Trivy config (misconfigurações no Terraform, informativo)
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          scan-type: config
-          scan-ref: infra
-          severity: HIGH,CRITICAL
-          exit-code: "0"
-          format: table
+        run: |
+          trivy config --severity HIGH,CRITICAL --exit-code 0 --format table infra
