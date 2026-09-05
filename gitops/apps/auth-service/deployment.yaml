@@ -18,6 +18,11 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        # UID do usuario 'nonroot' das imagens distroless. Sem o valor numerico o
+        # kubelet nao consegue verificar runAsNonRoot (USER nonroot e um nome) e
+        # recusa o container com CreateContainerConfigError.
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
