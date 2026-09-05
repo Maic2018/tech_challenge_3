@@ -124,7 +124,7 @@ jobs:
       # SCA: vulnerabilidades nas dependências (go.mod/go.sum, requirements.txt)
       # e segredos hardcoded. REGRA DE BLOQUEIO: qualquer CRITICAL falha aqui.
       - name: SCA - Trivy fs (bloqueia em CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scan-ref: ${{ inputs.service }}
@@ -136,7 +136,7 @@ jobs:
 
       - name: SCA - relatório HIGH/CRITICAL (informativo)
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scan-ref: ${{ inputs.service }}
@@ -205,7 +205,7 @@ jobs:
 
       # Container Scan: SO + bibliotecas dentro da imagem. Bloqueia em CRITICAL.
       - name: Container Scan - Trivy image (bloqueia em CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: image
           image-ref: ${{ steps.meta.outputs.local_image }}
