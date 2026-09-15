@@ -14,7 +14,7 @@ ROLE_NAME="${LAB_ROLE_NAME:-LabRole}"
 if ARN="$(aws iam get-role --role-name "$ROLE_NAME" --query Role.Arn --output text 2>/dev/null)"; then
   log "$ROLE_NAME encontrada: $ARN (usada pelo EKS e pelos nodes via data source)"
 else
-  warn "$ROLE_NAME não encontrada. Em conta pessoal, defina lab_role_arn em infra/terraform.tfvars."
+  warn "$ROLE_NAME não encontrada. Em conta pessoal, use create_iam_role = true (ou lab_role_arn) em infra/terraform.tfvars."
 fi
 
 echo "$ACCOUNT_ID" > "$REPO_ROOT/account_id.txt"

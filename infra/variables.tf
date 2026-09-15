@@ -23,6 +23,12 @@ variable "lab_role_name" {
   default     = "LabRole"
 }
 
+variable "create_iam_role" {
+  description = "Conta pessoal (Opção B): cria a role do EKS/nodes (iam.tf) em vez de ler a LabRole do Academy."
+  type        = bool
+  default     = false
+}
+
 variable "lab_role_arn" {
   description = "Opcional. ARN de uma role própria (conta pessoal). Se vazio, usa a data source da var.lab_role_name."
   type        = string
