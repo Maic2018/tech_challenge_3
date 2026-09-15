@@ -49,15 +49,20 @@ data "aws_caller_identity" "current" {}
 # ─── LabRole (AWS Academy) ───────────────────────────────────────────────────
 # O Academy não permite criar Roles/Policies de IAM. A LabRole existente é
 # importada via data source (Opção A do enunciado) e associada ao cluster e aos
-# node groups. Em conta pessoal (Opção B), informe var.lab_role_arn.
+# node groups. Em conta pessoal (Opção B), informe var.lab_role_arn ou use
+# create_iam_role = true para o Terraform criar a role (iam.tf).
 data "aws_iam_role" "lab" {
-  count = var.lab_role_arn == "" ? 1 : 0
+  count = var.lab_role_arn == "" && !var.create_iam_role ? 1 : 0
   name  = var.lab_role_name
 }
 
 locals {
   cluster_name = "${var.project_name}-cluster"
-  role_arn     = var.lab_role_arn != "" ? var.lab_role_arn : data.aws_iam_role.lab[0].arn
+  role_arn = (
+    var.lab_role_arn != "" ? var.lab_role_arn :
+    var.create_iam_role ? aws_iam_role.eks[0].arn :
+    data.aws_iam_role.lab[0].arn
+  )
 
   # Um banco PostgreSQL isolado por serviço que precisa de dados relacionais
   databases = {
@@ -93,6 +98,9 @@ module "eks" {
   node_desired_size   = var.node_desired_size
   node_max_size       = var.node_max_size
   public_access_cidrs = var.eks_public_access_cidrs
+
+  # Com create_iam_role, as policies precisam estar anexadas antes do cluster nascer
+  depends_on = [aws_iam_role_policy_attachment.eks, aws_iam_role_policy.app]
 }
 
 # ─── 3. Bancos de dados ─────────────────────────────────────────────────────
