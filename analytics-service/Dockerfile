@@ -7,6 +7,12 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1     PYTHONUNBUFFERED=1
+# Aplica os patches de segurança do Debian na imagem base. Sem isso o gate de
+# container scan do CI (Trivy, bloqueia em CRITICAL com fix disponível) reprova
+# o build por CVEs herdadas do python:3.12-slim (ex.: perl-base CVE-2026-13221).
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /install /usr/local
 COPY app.py ./
