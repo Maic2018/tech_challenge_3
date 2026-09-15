@@ -17,10 +17,16 @@ log "Repositório: $REPO"
 eval "$(aws configure export-credentials --format env)"
 [ -n "${AWS_ACCESS_KEY_ID:-}" ] || die "Credenciais AWS não encontradas (configure ~/.aws/credentials)"
 
-gh secret set AWS_ACCESS_KEY_ID     --repo "$REPO" --body "$AWS_ACCESS_KEY_ID"
-gh secret set AWS_SECRET_ACCESS_KEY --repo "$REPO" --body "$AWS_SECRET_ACCESS_KEY"
+# O valor vai pelo stdin, não por --body: no Git Bash (MSYS) um argumento que
+# começa com "/" (comum em secret keys) é convertido em caminho do Windows antes
+# de chegar ao gh.exe, e o GitHub recebe a chave corrompida. O CR do aws.exe
+# no Windows também é removido.
+set_secret() { printf '%s' "${2%$'\r'}" | gh secret set "$1" --repo "$REPO"; }
+
+set_secret AWS_ACCESS_KEY_ID     "$AWS_ACCESS_KEY_ID"
+set_secret AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"
 if [ -n "${AWS_SESSION_TOKEN:-}" ]; then
-  gh secret set AWS_SESSION_TOKEN --repo "$REPO" --body "$AWS_SESSION_TOKEN"
+  set_secret AWS_SESSION_TOKEN "$AWS_SESSION_TOKEN"
 else
   gh secret delete AWS_SESSION_TOKEN --repo "$REPO" >/dev/null 2>&1 || true
 fi
