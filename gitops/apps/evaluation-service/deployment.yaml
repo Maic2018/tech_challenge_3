@@ -28,7 +28,7 @@ spec:
       containers:
         - name: evaluation-service
           # Atualizado automaticamente pelo pipeline de CI (scripts/update-image-tag.sh)
-          image: 048432717457.dkr.ecr.us-east-1.amazonaws.com/togglemaster/evaluation-service:v1.0.0-dcac9bb
+          image: 048432717457.dkr.ecr.us-east-1.amazonaws.com/togglemaster/evaluation-service:v1.0.0-47bedf3
           imagePullPolicy: Always
           ports:
             - containerPort: 8004
