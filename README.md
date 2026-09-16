@@ -138,19 +138,6 @@ root modules e roda `trivy config` (informativo) na IaC.
 - Para promover uma versão basta o pipeline commitar a tag; para voltar, `git revert` do commit
   de GitOps. Alterações manuais no cluster são desfeitas pelo `selfHeal`.
 
-## Roteiro sugerido para o vídeo
-
-1. **IaC:** `terraform -chdir=infra plan` / `apply` (ou os recursos no console) e o state em
-   `s3://togglemaster-tfstate-<account>/infra/terraform.tfstate`.
-2. **Pipeline falhando:** em uma branch, adicione `PyYAML==5.3.1` ao
-   `flag-service/requirements.txt` (CVE-2020-14343, CRITICAL) ou volte `pgx` para `v5.5.0` no
-   `auth-service/go.mod` (CVE-2024-27304, CRITICAL). Abra o PR: o job **3. Security Scan** falha
-   e o Docker build não roda. Remova a dependência: o pipeline passa.
-3. **GitOps:** mostre o commit `ci(gitops): <svc> -> v1.0.0-<sha> [skip ci]` alterando
-   `gitops/apps/<svc>/deployment.yaml`.
-4. **ArgoCD:** a UI detecta o commit, sincroniza e o Deployment troca a imagem
-   (`kubectl -n togglemaster get deploy -o wide`).
-
 ## Testes e operação
 
 ```bash
