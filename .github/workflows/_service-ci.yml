@@ -218,15 +218,14 @@ jobs:
           trivy image --severity CRITICAL --exit-code 1                       --ignore-unfixed --format table                       "${{ steps.meta.outputs.local_image }}"
 
       # Em Pull Request só validamos build + scan. Push só em push/dispatch.
-      # AWS Academy não permite criar roles OIDC, por isso usamos access keys em Secrets
-      # (scripts/set-github-secrets.sh renova a cada sessão do laboratório).
+      # Credenciais de um IAM user dedicado, publicadas como Secrets do repositório
+      # por scripts/set-github-secrets.sh.
       - name: Configurar credenciais AWS
         if: github.event_name != 'pull_request'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login no Amazon ECR

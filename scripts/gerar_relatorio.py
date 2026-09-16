@@ -168,7 +168,7 @@ def build_document():
     add_body(doc,
         "Toda a infraestrutura de nuvem — VPC, NAT Gateway, cluster EKS, node group, RDS, "
         "ElastiCache, SQS, DynamoDB e ECR — é provisionada via Terraform (pasta infra/), "
-        "utilizando a LabRole do AWS Academy. Scripts de automação na raiz do projeto "
+        "com a role de IAM do cluster criada pelo próprio Terraform. Scripts de automação na raiz do projeto "
         "(run-all.sh) orquestram o fluxo completo: verificação da conta, terraform apply, "
         "build/push das imagens, instalação do Metrics Server e Nginx Ingress, geração "
         "automática de Secrets a partir dos outputs do Terraform, deploy Kubernetes, "
@@ -176,7 +176,7 @@ def build_document():
     )
     add_body(doc,
         "A escalabilidade foi implementada com Horizontal Pod Autoscaler (HPA) baseado em CPU "
-        "para evaluation-service e analytics-service, conforme requisito da Opção A (AWS Academy)."
+        "para evaluation-service e analytics-service, conforme requisito do enunciado."
     )
 
     # ── 1. Introdução ──
@@ -242,8 +242,8 @@ def build_document():
     add_body(doc,
         "Toda a infraestrutura AWS é provisionada via Terraform na pasta infra/. "
         "Um único terraform apply cria a stack completa — não há provisionamento manual "
-        "pelo Console AWS. A LabRole existente do AWS Academy é referenciada via variável "
-        "lab_role_arn no terraform.tfvars, conforme exigido pela Opção A do enunciado."
+        "pelo Console AWS. A role de IAM usada pelo cluster e pelos nodes é criada pelo próprio "
+        "Terraform (iam.tf), com as policies mínimas necessárias."
     )
 
     add_heading(doc, "4.1 Arquivos Terraform e recursos", level=2)
@@ -251,8 +251,8 @@ def build_document():
         ["Arquivo", "Recursos provisionados"],
         [
             ["main.tf", "Provider AWS (região us-east-1, versão ~> 5.0)"],
-            ["variables.tf", "aws_region, project_name, db_password, lab_role_arn"],
-            ["terraform.tfvars", "Valores de configuração (LabRole ARN, senha DB)"],
+            ["variables.tf", "aws_region, project_name, db_password"],
+            ["terraform.tfvars", "Valores de configuração (região, tipos de instância)"],
             ["vpc.tf", "VPC 10.0.0.0/16, 2 subnets públicas, 2 privadas, IGW, SGs (EKS, RDS, Redis)"],
             ["nat.tf", "NAT Gateway, EIP, route table privada (acesso à internet dos nodes)"],
             ["eks.tf", "Launch Template (IMDS hop limit=2), cluster EKS 1.31, Managed Node Group"],
@@ -268,7 +268,7 @@ def build_document():
     add_heading(doc, "4.2 Cluster EKS (eks.tf)", level=2)
     add_body(doc, "Recursos criados pelo Terraform:", bold=True)
     add_bullet(doc, "aws_eks_cluster.main — cluster togglemaster-cluster, versão Kubernetes 1.31;")
-    add_bullet(doc, "role_arn = var.lab_role_arn — utiliza a LabRole do AWS Academy;")
+    add_bullet(doc, "role_arn — role de IAM criada pelo Terraform em iam.tf;")
     add_bullet(doc, "Subnets públicas e privadas em 2 AZs; endpoint público e privado habilitados;")
     add_bullet(doc, "aws_eks_node_group.main — Managed Node Group em subnets privadas;")
     add_bullet(doc, "Auto Scaling: min=1, desired=2, max=4 (conforme enunciado Fase 02);")
@@ -283,7 +283,7 @@ def build_document():
     )
 
     add_heading(doc, "4.4 Fluxo de provisionamento", level=2)
-    add_bullet(doc, "cd infra && bash 00-check-account.sh — detecta Account ID e atualiza lab_role_arn;")
+    add_bullet(doc, "cd infra && bash 00-check-account.sh — confere a identidade AWS e salva o Account ID;")
     add_bullet(doc, "terraform init && terraform plan && terraform apply -auto-approve;")
     add_bullet(doc, "terraform output — exibe endpoints RDS, Redis, SQS, EKS, URLs ECR;")
     add_bullet(doc, "Tempo estimado: ~20–25 minutos (RDS e EKS são os recursos mais lentos).")
@@ -295,7 +295,7 @@ def build_document():
             ["VPC + Subnets + IGW", "Sim", "vpc.tf"],
             ["NAT Gateway", "Sim", "nat.tf"],
             ["Security Groups", "Sim", "vpc.tf"],
-            ["Cluster EKS + LabRole", "Sim", "eks.tf"],
+            ["Cluster EKS + IAM role", "Sim", "eks.tf"],
             ["Managed Node Group (1/2/4)", "Sim", "eks.tf"],
             ["Launch Template (IMDS fix)", "Sim", "eks.tf"],
             ["RDS PostgreSQL (×3)", "Sim", "rds.tf"],
@@ -318,7 +318,7 @@ def build_document():
         ["Script", "Função"],
         [
             ["run-all.sh", "Orquestra os 9 passos completos do zero ao ambiente validado"],
-            ["infra/00-check-account.sh", "Detecta Account ID Academy e atualiza lab_role_arn no tfvars"],
+            ["infra/00-check-account.sh", "Mostra a identidade AWS e salva o Account ID usado nos nomes dos recursos"],
             ["build-and-push.sh", "Build (--platform linux/amd64) e push das 5 imagens para ECR"],
             ["generate-secrets.sh", "Gera infra/k8s/secrets.yaml a partir dos terraform output"],
             ["deploy-k8s.sh", "Aplica manifestos K8s na ordem correta (NS → Secrets → Deployments → Ingress → HPA)"],
@@ -332,7 +332,7 @@ def build_document():
     add_body(doc, "Sequência do run-all.sh (9 passos):", bold=True)
     for i, step in enumerate([
         "Verificar Helm instalado",
-        "00-check-account.sh — atualizar LabRole ARN",
+        "00-check-account.sh — conferir identidade e Account ID",
         "terraform init + apply — infraestrutura completa",
         "aws eks update-kubeconfig — configurar kubectl",
         "build-and-push.sh — imagens no ECR",
@@ -357,7 +357,7 @@ def build_document():
     )
     add_heading(doc, "6.2 Nginx Ingress Controller", level=2)
     add_body(doc,
-        "Instalado via Helm (ingress-nginx). Com a LabRole nos nodes, o controller provisiona "
+        "Instalado via Helm (ingress-nginx). Com a role de IAM nos nodes, o controller provisiona "
         "automaticamente um Load Balancer (ALB/NLB) na AWS. Rotas: /auth, /flags, /targeting, "
         "/evaluate, /analytics."
     )
@@ -394,14 +394,14 @@ def build_document():
         ],
     )
     add_body(doc,
-        "Utilizamos HPA por CPU (Opção A — AWS Academy). O load test com hey "
+        "Utilizamos HPA por CPU. O load test com hey "
         "(tools/hey-wrapper.sh, 150 conexões por 3 minutos) gera carga no /evaluate e "
         "demonstra o HPA escalando réplicas. Para analytics-service, mensagens enviadas "
         "manualmente à fila SQS aumentam CPU do worker e disparam scale-out."
     )
     add_body(doc,
-        "Justificativa: KEDA (escalonamento por queueDepth) requer IRSA e novas IAM roles, "
-        "indisponíveis no AWS Academy. HPA por CPU atende ao requisito mínimo da Fase 02."
+        "Justificativa: KEDA (escalonamento por queueDepth) exigiria IRSA e um operador adicional "
+        "no cluster. HPA por CPU atende ao requisito mínimo da Fase 02."
     )
 
     add_page_break(doc)
@@ -421,7 +421,7 @@ def build_document():
     add_heading(doc, "9.3 DynamoDB — analytics de eventos", level=2)
     add_body(doc,
         "Tabela analytics-events (PK: event_id). analytics-service consome SQS e persiste "
-        "user_id, flag_name, result e timestamp. PAY_PER_REQUEST adequado ao Academy."
+        "user_id, flag_name, result e timestamp. PAY_PER_REQUEST evita capacidade provisionada ociosa."
     )
     add_heading(doc, "9.4 SQS — desacoplamento assíncrono", level=2)
     add_body(doc,
@@ -436,7 +436,7 @@ def build_document():
         [
             ["Isolamento de rede", "RDS, Redis e nodes EKS em subnets privadas + NAT Gateway"],
             ["Security Groups", "RDS (5432) e Redis (6379) acessíveis apenas pelo SG dos nodes"],
-            ["LabRole via Terraform", "Cluster e nodes usam LabRole existente (sem novas IAM roles)"],
+            ["IAM via Terraform", "Role do cluster e dos nodes criada em iam.tf, com policies mínimas de SQS e DynamoDB"],
             ["Autenticação API", "Chaves hasheadas SHA-256 no auth-service"],
             ["Secrets automatizados", "generate-secrets.sh lê terraform output, sem credenciais hardcoded no YAML"],
             ["IMDS hop limit", "Launch Template com hop_limit=2 para credenciais AWS nos pods"],
@@ -447,9 +447,9 @@ def build_document():
     # ── 11. Desafios ──
     add_heading(doc, "11. Desafios Enfrentados", level=1)
     desafios = [
-        ("LabRole muda a cada sessão Academy",
-         "O Account ID e ARN da LabRole mudam quando se abre nova sessão. Solução: script "
-         "00-check-account.sh atualiza terraform.tfvars automaticamente antes do apply."),
+        ("Nomes dependentes do Account ID",
+         "Bucket de state e registry ECR dependem do Account ID. Solução: 00-check-account.sh "
+         "salva o Account ID e os scripts derivam os nomes em tempo de execução."),
         ("IMDS hop limit e credenciais AWS nos pods",
          "Pods não conseguiam acessar SQS/DynamoDB (NoCredentialProviders). Solução: Launch "
          "Template com http_put_response_hop_limit=2 no eks.tf."),
@@ -484,7 +484,7 @@ def build_document():
     )
     add_body(doc, "Entregáveis atendidos:", bold=True)
     add_bullet(doc, "5 Dockerfiles multi-stage + docker-compose.yml funcional;")
-    add_bullet(doc, "Infraestrutura completa via Terraform (incluindo EKS com LabRole);")
+    add_bullet(doc, "Infraestrutura completa via Terraform (incluindo EKS e a role de IAM);")
     add_bullet(doc, "Scripts de automação (run-all.sh) para deploy end-to-end;")
     add_bullet(doc, "Metrics Server + Nginx Ingress + manifestos K8s completos;")
     add_bullet(doc, "HPA para evaluation-service e analytics-service;")

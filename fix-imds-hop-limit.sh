@@ -5,7 +5,7 @@
 # o hop limit já nasce correto.
 #
 # Corrige o IMDS hop limit das instâncias EC2 do node group, permitindo que
-# pods acessem a LabRole via metadata da instância (resolve erro
+# pods acessem a role dos nodes via metadata da instância (resolve erro
 # "NoCredentialProviders: no valid providers in chain" no SQS/DynamoDB).
 
 set -e

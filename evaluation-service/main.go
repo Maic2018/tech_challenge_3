@@ -73,7 +73,7 @@ func main() {
 	}
 	log.Println("Conectado ao Redis com sucesso!")
 
-	// Cliente SQS (AWS SDK v2). Credenciais vêm da cadeia padrão: no EKS, a LabRole
+	// Cliente SQS (AWS SDK v2). Credenciais vêm da cadeia padrão: no EKS, a role
 	// do node via IMDS; no docker-compose, AWS_ACCESS_KEY_ID/AWS_ENDPOINT_URL (LocalStack).
 	var sqsClient *sqs.Client
 	if sqsQueueURL != "" {

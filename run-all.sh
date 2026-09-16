@@ -15,7 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/scripts/common.sh"
 cd "$REPO_ROOT"
 require_cmd aws terraform kubectl curl
 
-step "PASSO 1/8 — Identidade AWS e LabRole"
+step "PASSO 1/8 — Identidade AWS"
 bash infra/00-check-account.sh
 
 step "PASSO 2/8 — Backend remoto do Terraform (bucket S3 versionado + lock)"

@@ -20,8 +20,7 @@ terraform {
   # Backend remoto (requisito da Fase 3): o tfstate NUNCA fica local.
   # O bucket é versionado e criptografado; o lock usa use_lockfile (Terraform >= 1.10),
   # sem precisar de tabela DynamoDB para lock.
-  # O nome do bucket depende do Account ID (que muda no AWS Academy), por isso é
-  # informado no init:
+  # O nome do bucket depende do Account ID, por isso é informado no init:
   #   terraform init -backend-config="bucket=togglemaster-tfstate-<ACCOUNT_ID>"
   # (scripts/tf-init.sh infra faz isso automaticamente)
   backend "s3" {
@@ -46,23 +45,8 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
-# ─── LabRole (AWS Academy) ───────────────────────────────────────────────────
-# O Academy não permite criar Roles/Policies de IAM. A LabRole existente é
-# importada via data source (Opção A do enunciado) e associada ao cluster e aos
-# node groups. Em conta pessoal (Opção B), informe var.lab_role_arn ou use
-# create_iam_role = true para o Terraform criar a role (iam.tf).
-data "aws_iam_role" "lab" {
-  count = var.lab_role_arn == "" && !var.create_iam_role ? 1 : 0
-  name  = var.lab_role_name
-}
-
 locals {
   cluster_name = "${var.project_name}-cluster"
-  role_arn = (
-    var.lab_role_arn != "" ? var.lab_role_arn :
-    var.create_iam_role ? aws_iam_role.eks[0].arn :
-    data.aws_iam_role.lab[0].arn
-  )
 
   # Um banco PostgreSQL isolado por serviço que precisa de dados relacionais
   databases = {
@@ -82,14 +66,14 @@ module "network" {
   cluster_name = local.cluster_name
 }
 
-# ─── 2. Cluster EKS + Node Group (LabRole) ──────────────────────────────────
+# ─── 2. Cluster EKS + Node Group ────────────────────────────────────────────
 module "eks" {
   source = "./modules/eks"
 
   project_name        = var.project_name
   cluster_name        = local.cluster_name
   cluster_version     = var.eks_version
-  role_arn            = local.role_arn
+  role_arn            = aws_iam_role.eks.arn
   vpc_id              = module.network.vpc_id
   cluster_subnet_ids  = concat(module.network.public_subnet_ids, module.network.private_subnet_ids)
   node_subnet_ids     = module.network.private_subnet_ids
@@ -99,7 +83,7 @@ module "eks" {
   node_max_size       = var.node_max_size
   public_access_cidrs = var.eks_public_access_cidrs
 
-  # Com create_iam_role, as policies precisam estar anexadas antes do cluster nascer
+  # As policies precisam estar anexadas antes de o cluster nascer
   depends_on = [aws_iam_role_policy_attachment.eks, aws_iam_role_policy.app]
 }
 

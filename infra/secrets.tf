@@ -13,7 +13,7 @@ resource "aws_secretsmanager_secret" "db" {
 
   name                    = "${var.project_name}/rds"
   description             = "Credenciais dos bancos PostgreSQL do ToggleMaster (gerenciado pelo Terraform)"
-  recovery_window_in_days = 0 # permite destroy/apply repetidos no Academy sem conflito de nome
+  recovery_window_in_days = 0 # permite destroy/apply repetidos sem conflito de nome
 }
 
 resource "aws_secretsmanager_secret_version" "db" {

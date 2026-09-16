@@ -116,7 +116,7 @@ def build():
     heading(doc, "Resumo")
     body(doc, (
         "Na Fase 3 a operação do ToggleMaster foi automatizada de ponta a ponta seguindo a regra "
-        "\"se não está no código, não existe\". Toda a infraestrutura AWS (VPC, EKS com a LabRole, três "
+        "\"se não está no código, não existe\". Toda a infraestrutura AWS (VPC, EKS, três "
         "RDS PostgreSQL, ElastiCache Redis, DynamoDB, SQS e cinco repositórios ECR) é criada por Terraform "
         "modularizado, com state remoto em S3 versionado e lock nativo (use_lockfile). Cada microsserviço "
         "tem um pipeline de CI no GitHub Actions com build e testes, lint, SCA e SAST com regra de bloqueio "
@@ -131,7 +131,7 @@ def build():
     heading(doc, "1. Infraestrutura como Código (Terraform)")
     table(doc, ["Módulo", "Recursos"], [
         ("modules/network", "VPC 10.0.0.0/16, 2 subnets públicas + 2 privadas, IGW, NAT Gateway, route tables"),
-        ("modules/eks", "Cluster EKS 1.33 com LabRole (data source), Managed Node Group t3.medium (1/2/4), "
+        ("modules/eks", "Cluster EKS 1.33, Managed Node Group t3.medium (1/2/4), "
                         "launch template com IMDS hop limit 2, security group dos nodes"),
         ("modules/rds", "3 instâncias PostgreSQL 15 (auth_db, flag_db, targeting_db), criptografadas, privadas"),
         ("modules/elasticache", "Cluster Redis 7 (cache.t3.micro)"),
@@ -143,8 +143,8 @@ def build():
     ])
     body(doc, (
         "Estado remoto: backend S3 com encrypt e use_lockfile, bucket criado por scripts/bootstrap-backend.sh "
-        "(versionamento, SSE-S3 e bloqueio de acesso público). O nome do bucket inclui o Account ID, que muda "
-        "entre sessões do AWS Academy, e é informado no init pelo script scripts/tf-init.sh."
+        "(versionamento, SSE-S3 e bloqueio de acesso público). O nome do bucket inclui o Account ID e é "
+        "informado no init pelo script scripts/tf-init.sh."
     ))
 
     # ── CI ──────────────────────────────────────────────────────────────────
@@ -175,10 +175,10 @@ def build():
     # ── Desafios ────────────────────────────────────────────────────────────
     heading(doc, "4. Desafios encontrados e decisões tomadas")
     for txt in (
-        "AWS Academy não permite criar roles: a LabRole é lida via data source e o pipeline autentica no ECR "
-        "com access keys da sessão do laboratório publicadas como Secrets do GitHub (renovadas por script), "
-        "já que não é possível criar uma role OIDC para o GitHub Actions.",
-        "Account ID muda entre sessões: nomes de bucket e registry são derivados em tempo de execução; o CI "
+        "IAM sob controle do Terraform: a role do cluster, dos nodes e dos pods é criada em infra/iam.tf com "
+        "as policies mínimas de SQS e DynamoDB; o pipeline autentica no ECR com as chaves de um IAM user "
+        "dedicado, publicadas como Secrets do GitHub por scripts/set-github-secrets.sh.",
+        "Nomes dependentes do Account ID: bucket de state e registry são derivados em tempo de execução; o CI "
         "grava no GitOps a imagem completa do registry em que fez login, então os manifestos se corrigem sozinhos.",
         "Segredos em texto plano (Fase 2): substituídos por random_password no Terraform, Secrets Manager e "
         "Secrets do Kubernetes criados por Terraform. O state e o tfvars saíram do repositório e o histórico "
@@ -209,7 +209,7 @@ def build():
         ("DynamoDB / SQS / ECR / S3 / Secrets Manager", "on-demand, baixo volume", "5"),
         ("Total aproximado", "", "≈ 265"),
     ])
-    body(doc, "No AWS Academy o ambiente é criado apenas durante as sessões e destruído com destroy-all.sh, "
+    body(doc, "O ambiente é criado sob demanda e destruído com destroy-all.sh ao fim dos testes, "
               "então o custo real fica bem abaixo do valor mensal.")
 
     # ── Conclusão ───────────────────────────────────────────────────────────
