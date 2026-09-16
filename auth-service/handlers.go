@@ -30,7 +30,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 // healthHandler é um simples endpoint de verificação de saúde
 func (a *App) healthHandler(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "release": "fase3-demo"})
 }
 
 // validateKeyHandler verifica se uma chave de API (enviada via Header) é válida
