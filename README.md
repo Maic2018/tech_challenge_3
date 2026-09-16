@@ -7,7 +7,7 @@ pipelines de segurança (DevSecOps) e deploy por GitOps com ArgoCD.
 
 | Requisito do enunciado | Onde está |
 |---|---|
-| Terraform modular: VPC, EKS + LabRole, 3× RDS, ElastiCache, DynamoDB, SQS, 5× ECR | [`infra/`](infra/) + [`infra/modules/`](infra/modules/) |
+| Terraform modular: VPC, EKS + IAM, 3× RDS, ElastiCache, DynamoDB, SQS, 5× ECR | [`infra/`](infra/) + [`infra/modules/`](infra/modules/) |
 | State remoto em S3 (versionado, criptografado) com lock via `use_lockfile` | [`infra/main.tf`](infra/main.tf) + [`scripts/bootstrap-backend.sh`](scripts/bootstrap-backend.sh) |
 | 1 workflow por microsserviço, em Pull Request e push na `main` | [`.github/workflows/<serviço>.yml`](.github/workflows/) |
 | Build & Unit Test → Lint → SCA + SAST (bloqueia em CRITICAL) → Docker build + Trivy image + push no ECR com tag do commit | [`.github/workflows/_service-ci.yml`](.github/workflows/_service-ci.yml) |
@@ -36,10 +36,10 @@ pipelines de segurança (DevSecOps) e deploy por GitOps com ArgoCD.
 - Segredos (senha do RDS, MASTER_KEY, chave interna de API) são gerados pelo Terraform,
   guardados no state remoto (S3 com SSE) e no Secrets Manager, e entregues ao cluster como
   `Secret` pelo próprio Terraform. Os manifestos só os referenciam pelo nome.
-- **AWS Academy:** nada de IAM. A `LabRole` é lida via `data "aws_iam_role"` e usada pelo
-  cluster e pelos nodes. Como não dá para criar uma role OIDC para o GitHub, o pipeline usa
-  access keys da sessão do lab guardadas como Secrets do repositório
-  (`scripts/set-github-secrets.sh` renova a cada sessão).
+- **IAM:** a role usada pelo control plane, pelos nodes e (via IMDS) pelos pods é criada
+  pelo Terraform em [`infra/iam.tf`](infra/iam.tf). O pipeline autentica no ECR com as
+  chaves de um IAM user dedicado, guardadas como Secrets do repositório
+  (`scripts/set-github-secrets.sh` publica/rotaciona).
 
 ## Estrutura do repositório
 
@@ -68,7 +68,7 @@ pipelines de segurança (DevSecOps) e deploy por GitOps com ArgoCD.
 
 ## Pré-requisitos
 
-- AWS CLI v2 com as credenciais da sessão do Academy (`aws sts get-caller-identity` funcionando)
+- AWS CLI v2 configurado (`aws sts get-caller-identity` funcionando)
 - Terraform **>= 1.10** (o lock do state usa `use_lockfile`)
 - kubectl
 - GitHub CLI (`gh auth login`) — usado para publicar os Secrets e disparar o pipeline
@@ -85,7 +85,7 @@ O `run-all.sh` executa, nesta ordem:
 
 | # | Passo | Comando equivalente |
 |---|---|---|
-| 1 | Identidade AWS + LabRole | `bash infra/00-check-account.sh` |
+| 1 | Identidade AWS | `bash infra/00-check-account.sh` |
 | 2 | Bucket S3 do state (versionado, SSE, sem acesso público) | `bash scripts/bootstrap-backend.sh` |
 | 3 | Infraestrutura | `bash scripts/tf-init.sh infra && terraform -chdir=infra plan && terraform -chdir=infra apply` |
 | 4 | kubeconfig | `aws eks update-kubeconfig --name togglemaster-cluster --region us-east-1` |
@@ -123,10 +123,10 @@ root modules e roda `trivy config` (informativo) na IaC.
 
 | Achado | Decisão |
 |---|---|
-| EKS com endpoint público / CIDR aberto (AVD-AWS-0040/0041) | Necessário no Academy (IP de saída muda). Restrinja com `eks_public_access_cidrs` quando possível. |
+| EKS com endpoint público / CIDR aberto (AVD-AWS-0040/0041) | Necessário para administrar o cluster de fora da VPC. Restrinja com `eks_public_access_cidrs` quando possível. |
 | Egress irrestrito nos security groups (AVD-AWS-0104) | Nodes precisam sair para ECR, SQS, DynamoDB e GitHub via NAT. |
 | Tags do ECR mutáveis (AVD-AWS-0031) | Permite reexecutar o pipeline do mesmo commit; troque `image_tag_mutability` para `IMMUTABLE` se preferir. |
-| Secrets do EKS sem KMS (AVD-AWS-0039) | Exigiria criar chave KMS; fora do escopo do laboratório. |
+| Secrets do EKS sem KMS (AVD-AWS-0039) | Exigiria criar e manter uma chave KMS; fora do escopo do desafio. |
 
 ## GitOps e ArgoCD
 
@@ -173,7 +173,7 @@ bash destroy-all.sh --delete-state-bucket  # também apaga o bucket do state
 | Problema | Causa / solução |
 |---|---|
 | `terraform init` pede bucket | use `bash scripts/tf-init.sh infra` (passa `-backend-config=bucket=...`) |
-| Pipeline falha no login do ECR | credenciais do Academy expiraram: `bash scripts/set-github-secrets.sh` |
+| Pipeline falha no login do ECR | chaves do IAM user do CI inválidas/rotacionadas: `bash scripts/set-github-secrets.sh` |
 | `gh workflow run` não encontra o workflow | os arquivos precisam estar na branch `main` (faça o merge) |
 | Pods em `ImagePullBackOff` | a tag em `gitops/` ainda aponta para outro account/imagem: rode o pipeline |
 | ArgoCD `Unknown`/`ComparisonError` | repositório privado sem token: `GITOPS_REPO_TOKEN=...` no apply da plataforma |

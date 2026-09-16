@@ -1,4 +1,4 @@
-# Cluster EKS + Managed Node Group usando uma role existente (LabRole no Academy).
+# Cluster EKS + Managed Node Group usando a role criada em infra/iam.tf.
 
 # ─── SECURITY GROUP ADICIONAL DOS NODES ─────────────────────────────────────
 resource "aws_security_group" "nodes" {
@@ -27,7 +27,7 @@ resource "aws_security_group" "nodes" {
 
 # ─── LAUNCH TEMPLATE ────────────────────────────────────────────────────────
 # Corrige permanentemente o IMDS hop limit: sem hop_limit=2 os pods não alcançam
-# as credenciais da LabRole via metadata da instância e as chamadas ao SQS/DynamoDB
+# as credenciais da role dos nodes via metadata da instância e as chamadas ao SQS/DynamoDB
 # falham com "NoCredentialProviders".
 resource "aws_launch_template" "nodes" {
   name_prefix = "${var.project_name}-nodes-"

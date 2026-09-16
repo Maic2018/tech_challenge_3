@@ -16,25 +16,6 @@ variable "vpc_cidr" {
   default     = "10.0.0.0/16"
 }
 
-# ─── IAM (AWS Academy x conta pessoal) ──────────────────────────────────────
-variable "lab_role_name" {
-  description = "Nome da role existente usada pelo EKS e pelos nodes (AWS Academy: LabRole). Lida via data source."
-  type        = string
-  default     = "LabRole"
-}
-
-variable "create_iam_role" {
-  description = "Conta pessoal (Opção B): cria a role do EKS/nodes (iam.tf) em vez de ler a LabRole do Academy."
-  type        = bool
-  default     = false
-}
-
-variable "lab_role_arn" {
-  description = "Opcional. ARN de uma role própria (conta pessoal). Se vazio, usa a data source da var.lab_role_name."
-  type        = string
-  default     = ""
-}
-
 # ─── EKS ────────────────────────────────────────────────────────────────────
 variable "eks_version" {
   description = "Versão do Kubernetes no EKS"
@@ -43,7 +24,7 @@ variable "eks_version" {
 }
 
 variable "eks_public_access_cidrs" {
-  description = "CIDRs com acesso ao endpoint público do EKS (0.0.0.0/0 no Academy, pois o IP de saída muda; restrinja ao seu IP quando possível)"
+  description = "CIDRs com acesso ao endpoint público do EKS (restrinja ao seu IP quando possível)"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }

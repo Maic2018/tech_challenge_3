@@ -11,7 +11,7 @@ variable "cluster_version" {
 }
 
 variable "role_arn" {
-  description = "Role usada pelo control plane e pelos nodes (LabRole no AWS Academy)"
+  description = "Role usada pelo control plane e pelos nodes"
   type        = string
 }
 

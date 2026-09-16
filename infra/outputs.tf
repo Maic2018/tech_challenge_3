@@ -10,8 +10,8 @@ output "aws_region" {
   value = var.aws_region
 }
 
-output "lab_role_arn" {
-  value       = local.role_arn
+output "eks_role_arn" {
+  value       = aws_iam_role.eks.arn
   description = "Role associada ao cluster e aos nodes"
 }
 

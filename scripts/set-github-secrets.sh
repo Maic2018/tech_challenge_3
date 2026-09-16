@@ -1,8 +1,7 @@
 #!/bin/bash
 # Publica as credenciais AWS atuais como Secrets do repositório GitHub, para o
-# pipeline conseguir logar no ECR. No AWS Academy as credenciais expiram a cada
-# sessão do laboratório: rode este script sempre que iniciar o lab.
-# (O Academy não permite criar roles OIDC; senão usaríamos role-to-assume.)
+# pipeline conseguir logar no ECR. Rode sempre que rotacionar as chaves do IAM
+# user usado pelo CI.
 # Uso: bash scripts/set-github-secrets.sh        [GITHUB_REPO=owner/repo para forçar]
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
@@ -13,7 +12,7 @@ gh auth status >/dev/null 2>&1 || die "Faça login no GitHub primeiro: gh auth l
 REPO="${GITHUB_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
 log "Repositório: $REPO"
 
-# Credenciais efetivas do perfil atual (inclui o session token do Academy)
+# Credenciais efetivas do perfil atual
 eval "$(aws configure export-credentials --format env)"
 [ -n "${AWS_ACCESS_KEY_ID:-}" ] || die "Credenciais AWS não encontradas (configure ~/.aws/credentials)"
 
@@ -25,10 +24,5 @@ set_secret() { printf '%s' "${2%$'\r'}" | gh secret set "$1" --repo "$REPO"; }
 
 set_secret AWS_ACCESS_KEY_ID     "$AWS_ACCESS_KEY_ID"
 set_secret AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"
-if [ -n "${AWS_SESSION_TOKEN:-}" ]; then
-  set_secret AWS_SESSION_TOKEN "$AWS_SESSION_TOKEN"
-else
-  gh secret delete AWS_SESSION_TOKEN --repo "$REPO" >/dev/null 2>&1 || true
-fi
 log "Secrets AWS_* atualizados em $REPO."
 log "Opcional: 'gh secret set GITOPS_TOKEN' (PAT) se a branch main for protegida."
