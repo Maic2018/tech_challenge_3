@@ -146,7 +146,7 @@ Arquivo: [`.github/workflows/_service-ci.yml`](.github/workflows/_service-ci.yml
 | 5. GitOps | `scripts/update-image-tag.sh` + commit `[skip ci]` em `gitops/apps/<svc>/deployment.yaml` | idem | — |
 
 Em Pull Request os jobs 1–4 rodam (sem push para o ECR); em push na `main` tudo roda e o
-job 5 commita a nova tag. Um `concurrency group` serializa os commits dos 5 pipelines.
+job 5 commita a nova tag. Commits simultâneos dos 5 pipelines são resolvidos com fetch + nova tentativa de push.
 [`terraform-ci.yml`](.github/workflows/terraform-ci.yml) valida `fmt`/`validate` dos dois
 root modules e roda `trivy config` (informativo) na IaC.
 
