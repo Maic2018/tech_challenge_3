@@ -29,6 +29,12 @@ variable "eks_public_access_cidrs" {
   default     = ["0.0.0.0/0"]
 }
 
+variable "existing_role_name" {
+  description = "Role IAM já existente para EKS/nodes (AWS Academy: LabRole). Vazio = o Terraform cria a role"
+  type        = string
+  default     = ""
+}
+
 variable "node_instance_types" {
   description = "Tipos de instância dos nodes"
   type        = list(string)
@@ -40,9 +46,11 @@ variable "node_min_size" {
   default = 1
 }
 
+# Fase 4: a stack de observabilidade (Prometheus, Grafana, Loki, OTel Collector)
+# soma ~11 pods e ~1,6 GiB de requests; com 3 nodes sobra folga para o HPA escalar.
 variable "node_desired_size" {
   type    = number
-  default = 2
+  default = 3
 }
 
 variable "node_max_size" {

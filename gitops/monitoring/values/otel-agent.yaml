@@ -1,0 +1,75 @@
+# OpenTelemetry Collector — AGENT (DaemonSet, 1 pod por node). Lê os logs de TODOS
+# os contêineres do node (/var/log/pods, receiver filelog), enriquece com metadados
+# do Kubernetes e repassa via OTLP para o gateway, que roteia para Loki e New Relic.
+mode: daemonset
+fullnameOverride: otel-agent
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+command:
+  name: otelcol-contrib
+
+presets:
+  logsCollection:
+    enabled: true
+    includeCollectorLogs: false
+  kubernetesAttributes:
+    enabled: true
+
+# Os arquivos de /var/log/pods pertencem ao root (0640): o agente precisa ler como root.
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+
+# O agente não recebe nada pela rede: só lê arquivos do node
+ports:
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: false
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null
+    otlp: null
+
+  processors:
+    # Logs do filelog não têm service.name: usa o nome do contêiner (auth-service, ...)
+    resource/service-name:
+      attributes:
+        - key: service.name
+          from_attribute: k8s.container.name
+          action: insert
+
+  exporters:
+    debug: null
+    otlp/gateway:
+      endpoint: otel-gateway.monitoring.svc.cluster.local:4317
+      tls:
+        insecure: true
+
+  service:
+    pipelines:
+      traces: null
+      metrics: null
+      logs:
+        receivers: [filelog]
+        processors: [memory_limiter, k8sattributes, resource/service-name, batch]
+        exporters: [otlp/gateway]

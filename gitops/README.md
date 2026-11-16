@@ -12,7 +12,8 @@ gitops/
 │   ├── targeting-service/
 │   ├── evaluation-service/     # + hpa.yaml
 │   └── analytics-service/      # + hpa.yaml
-└── platform/                   # Application "togglemaster-platform": ConfigMap + Ingress
+├── platform/                   # Application "togglemaster-platform": ConfigMap + Ingress
+└── monitoring/                 # Fase 4: app-of-apps "togglemaster-monitoring" (ver monitoring/README.md)
 ```
 
 - A linha `image:` de cada `deployment.yaml` é alterada **pelo pipeline de CI**

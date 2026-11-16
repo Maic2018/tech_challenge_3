@@ -1,0 +1,38 @@
+# Helm chart opentelemetry-collector 0.176.1 no modo agent/DaemonSet (values em gitops/monitoring/values/otel-agent.yaml)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-agent
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: togglemaster-monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  sources:
+    - repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts
+      chart: opentelemetry-collector
+      targetRevision: 0.176.1
+      helm:
+        releaseName: otel-agent
+        valueFiles:
+          - $values/gitops/monitoring/values/otel-agent.yaml
+    - repoURL: https://github.com/Maic2018/tech_challenge_3.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

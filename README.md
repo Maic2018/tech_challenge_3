@@ -1,9 +1,37 @@
-# ToggleMaster — Tech Challenge Fase 3 (IaC + DevSecOps + GitOps)
+# ToggleMaster — Tech Challenge Fases 3 e 4 (IaC + DevSecOps + GitOps + Observabilidade)
 
 Plataforma de feature flags em 5 microsserviços (**auth**, **flag**, **targeting**,
 **evaluation**, **analytics**) rodando em Kubernetes (EKS). Na Fase 3 a regra é
 **"se não está no código, não existe"**: infraestrutura imutável via Terraform,
-pipelines de segurança (DevSecOps) e deploy por GitOps com ArgoCD.
+pipelines de segurança (DevSecOps) e deploy por GitOps com ArgoCD. A Fase 4 acrescenta
+**observabilidade total e resposta ativa**: OpenTelemetry, Prometheus, Loki, Grafana,
+APM no New Relic, alertas com PagerDuty/Discord e self-healing.
+
+## Fase 4 — Observabilidade e resposta a incidentes
+
+| Requisito do enunciado | Onde está |
+|---|---|
+| Prometheus, Loki e Grafana via Helm charts no repositório GitOps | [`gitops/monitoring/apps/`](gitops/monitoring/apps/) + [`values/`](gitops/monitoring/values/) (app-of-apps registrado por [`infra/platform/monitoring.tf`](infra/platform/monitoring.tf)) |
+| Dashboard customizado: recursos do cluster, taxa de requisições e logs em tempo real | [`grafana-dashboard-togglemaster.yaml`](gitops/monitoring/manifests/grafana-dashboard-togglemaster.yaml) |
+| OTel Collector como peça central (métricas, logs e traces → Prometheus, Loki e APM) | [`otel-gateway.yaml`](gitops/monitoring/values/otel-gateway.yaml) + [`otel-agent.yaml`](gitops/monitoring/values/otel-agent.yaml) |
+| Instrumentação do código com bibliotecas OpenTelemetry | Go: `telemetry.go` + otelhttp/otelsql/redisotel/AWS SDK. Python: `telemetry.py` + Flask/requests/psycopg2/botocore |
+| Distributed tracing a partir do evaluation-service (inclusive pela fila SQS) e Service Map dos 5 serviços | New Relic, via OTLP pelo gateway |
+| Alerta inteligente (5xx do auth-service > 5%) | [`grafana-alerting.yaml`](gitops/monitoring/manifests/grafana-alerting.yaml) |
+| Incidente no PagerDuty + notificação no Discord | contact points do mesmo arquivo; chaves só em Secrets do Terraform |
+| Self-healing automático (`kubectl rollout restart`) | [`self-healing/responder.py`](gitops/monitoring/manifests/self-healing/responder.py) + [`self-healing.yaml`](gitops/monitoring/manifests/self-healing.yaml) |
+| Prova real (causar falha, alerta, incidente, restart) | [`scripts/chaos-demo.sh`](scripts/chaos-demo.sh) |
+
+Arquitetura, alertas, runbook e justificativa técnica (OTel, New Relic x Datadog,
+PagerDuty x OpsGenie): **[`gitops/monitoring/README.md`](gitops/monitoring/README.md)**.
+
+```bash
+export NEW_RELIC_LICENSE_KEY=... PAGERDUTY_INTEGRATION_KEY=... DISCORD_WEBHOOK_URL=...
+bash run-all.sh                    # sobe tudo, inclusive a stack de observabilidade
+bash scripts/monitoring-info.sh    # URL/senha do Grafana
+bash scripts/chaos-demo.sh 50      # injeta 5xx no auth-service e espera o self-healing
+```
+
+## Fase 3 — IaC, DevSecOps e GitOps
 
 | Requisito do enunciado | Onde está |
 |---|---|
@@ -51,14 +79,17 @@ pipelines de segurança (DevSecOps) e deploy por GitOps com ArgoCD.
 │   ├── secrets.tf            # random_password + Secrets Manager
 │   ├── modules/{network,eks,rds,elasticache,dynamodb,sqs,ecr}/
 │   ├── platform/             # 2º root module: ArgoCD, ingress, metrics-server, Secrets K8s
+│   │                         # + monitoring.tf (namespace, credenciais, app-of-apps da Fase 4)
 │   │   └── argocd/           # ApplicationSet (5 serviços) + Application (platform)
 │   └── 00-check-account.sh
 ├── gitops/                   # repositório GitOps (só manifestos)
 │   ├── apps/<serviço>/       # deployment.yaml, service.yaml (+ hpa.yaml)
-│   └── platform/             # configmap.yaml, ingress.yaml
+│   ├── platform/             # configmap.yaml, ingress.yaml
+│   └── monitoring/           # Fase 4: Applications dos charts, values, dashboard, alertas, self-healing
 ├── .github/workflows/        # _service-ci.yml (reutilizável) + 5 chamadores + terraform-ci.yml
 ├── scripts/                  # bootstrap-backend, tf-init, set-github-secrets, trigger-ci,
-│                             # update-image-tag, get-api-key, argocd-info, wait-argocd-sync
+│                             # update-image-tag, get-api-key, argocd-info, wait-argocd-sync,
+│                             # monitoring-info, chaos-demo (Fase 4)
 ├── run-all.sh                # sobe tudo do zero (ordem certa)
 ├── destroy-all.sh            # derruba tudo (plataforma → infra → bucket opcional)
 ├── run-migrations.sh         # Job in-cluster: cria tabelas + registra chave interna
@@ -166,6 +197,10 @@ bash destroy-all.sh --delete-state-bucket  # também apaga o bucket do state
 | ArgoCD `Unknown`/`ComparisonError` | repositório privado sem token: `GITOPS_REPO_TOKEN=...` no apply da plataforma |
 | Pods sem credenciais AWS (SQS/DynamoDB) | hop limit do IMDS: já corrigido no launch template; fallback `fix-imds-hop-limit.sh` |
 | `Application` com Ingress em erro | ingress-nginx ainda subindo; o ArgoCD tenta de novo (retry) |
+| Grafana sem dados de aplicação | o `otel-gateway` sobe depois dos serviços; os SDKs reenviam sozinhos. Confira `kubectl -n monitoring logs deploy/otel-gateway` |
+| Nada chega ao New Relic | `NEW_RELIC_LICENSE_KEY` ausente/errada (erro 403 no log do `otel-gateway`) ou conta na UE (`NEW_RELIC_OTLP_ENDPOINT`) |
+| Alerta dispara mas PagerDuty/Discord não recebem | credencial não informada no apply da plataforma: `terraform -chdir=infra/platform output observability_integrations` |
+| Pods `Pending` depois da Fase 4 | falta capacidade: a infra usa 3 nodes por padrão (`node_desired_size`) |
 
 ## Desenvolvimento local
 

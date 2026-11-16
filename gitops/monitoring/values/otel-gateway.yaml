@@ -1,0 +1,132 @@
+# OpenTelemetry Collector — GATEWAY (Deployment, 1 réplica). Peça central da telemetria:
+#
+#   apps (SDK OTel, OTLP/HTTP :4318) ──traces──▶ New Relic (APM)
+#                                    │        └─▶ connector spanmetrics ─▶ Prometheus (RED)
+#                                    ├─metrics─▶ Prometheus (remote write) + New Relic
+#   otel-agent (filelog, DaemonSet) ─logs────▶ Loki (OTLP nativo) + New Relic (só app)
+#
+# A licença do New Relic vem do Secret "otel-newrelic", criado pelo Terraform
+# (infra/platform/monitoring.tf) — nunca passa pelo git.
+mode: deployment
+replicaCount: 1
+fullnameOverride: otel-gateway
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+command:
+  name: otelcol-contrib
+
+presets:
+  # Enriquecimento com k8s.pod.name, k8s.deployment.name, k8s.node.name... (RBAC incluso)
+  kubernetesAttributes:
+    enabled: true
+
+extraEnvs:
+  - name: NEW_RELIC_LICENSE_KEY
+    valueFrom:
+      secretKeyRef:
+        name: otel-newrelic
+        key: NEW_RELIC_LICENSE_KEY
+  - name: NEW_RELIC_OTLP_ENDPOINT
+    valueFrom:
+      secretKeyRef:
+        name: otel-newrelic
+        key: NEW_RELIC_OTLP_ENDPOINT
+
+ports:
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+config:
+  receivers:
+    jaeger: null
+    zipkin: null
+    prometheus: null
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+
+  processors:
+    resource/cluster:
+      attributes:
+        - key: k8s.cluster.name
+          value: togglemaster-cluster
+          action: upsert
+        - key: deployment.environment
+          value: lab
+          action: upsert
+    # O New Relic prefere métricas em delta
+    cumulativetodelta: {}
+    # Para o New Relic só vão os logs dos 5 microsserviços (o Loki recebe todos)
+    filter/app-logs:
+      error_mode: ignore
+      logs:
+        log_record:
+          - resource.attributes["k8s.namespace.name"] != "togglemaster"
+
+  connectors:
+    # Gera métricas RED (taxa, erros, duração) a partir dos spans de TODOS os serviços,
+    # independentemente da linguagem. Base do dashboard e do alerta de 5xx.
+    spanmetrics:
+      namespace: traces.span.metrics
+      histogram:
+        unit: ms
+        explicit:
+          buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s]
+      dimensions:
+        - name: http.request.method
+        - name: http.response.status_code
+      metrics_flush_interval: 15s
+
+  exporters:
+    debug: null
+    otlphttp/newrelic:
+      endpoint: ${env:NEW_RELIC_OTLP_ENDPOINT}
+      headers:
+        api-key: ${env:NEW_RELIC_LICENSE_KEY}
+      compression: gzip
+    prometheusremotewrite:
+      endpoint: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write
+      resource_to_telemetry_conversion:
+        enabled: true
+    otlphttp/loki:
+      endpoint: http://loki.monitoring.svc.cluster.local:3100/otlp
+
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, resource/cluster, batch]
+        exporters: [otlphttp/newrelic, spanmetrics]
+      metrics:
+        receivers: [otlp, spanmetrics]
+        processors: [memory_limiter, k8sattributes, resource/cluster, batch]
+        exporters: [prometheusremotewrite]
+      metrics/newrelic:
+        receivers: [otlp]
+        processors: [memory_limiter, k8sattributes, resource/cluster, cumulativetodelta, batch]
+        exporters: [otlphttp/newrelic]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, resource/cluster, batch]
+        exporters: [otlphttp/loki]
+      logs/newrelic:
+        receivers: [otlp]
+        processors: [memory_limiter, resource/cluster, filter/app-logs, batch]
+        exporters: [otlphttp/newrelic]

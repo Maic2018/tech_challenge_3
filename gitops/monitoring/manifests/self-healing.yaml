@@ -1,0 +1,129 @@
+# Self-healing (Runbook Automation): recebe o webhook do Grafana quando o alerta crítico
+# dispara e executa "kubectl rollout restart deployment/<serviço>" pela API do Kubernetes.
+# O código está em self-healing/responder.py (ConfigMap gerado pelo kustomization.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: self-healing
+  namespace: monitoring
+---
+# Permissão mínima: ler e "patchar" Deployments (restart), só no namespace da aplicação
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: self-healing-restart
+  namespace: togglemaster
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: self-healing-restart
+  namespace: togglemaster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: self-healing-restart
+subjects:
+  - kind: ServiceAccount
+    name: self-healing
+    namespace: monitoring
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: self-healing
+  namespace: monitoring
+  labels:
+    app: self-healing
+    app.kubernetes.io/part-of: togglemaster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: self-healing
+  template:
+    metadata:
+      labels:
+        app: self-healing
+    spec:
+      serviceAccountName: self-healing
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: self-healing
+          image: python:3.12-alpine
+          command: ["python", "-u", "/app/responder.py"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TARGET_NAMESPACE
+              value: togglemaster
+            - name: ALLOWED_DEPLOYMENTS
+              value: auth-service,flag-service,targeting-service,evaluation-service,analytics-service
+            - name: COOLDOWN_SECONDS
+              value: "300"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: WEBHOOK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: self-healing
+                  key: WEBHOOK_TOKEN
+            - name: DISCORD_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: self-healing
+                  key: DISCORD_WEBHOOK_URL
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      volumes:
+        - name: script
+          configMap:
+            name: self-healing-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: self-healing
+  namespace: monitoring
+  labels:
+    app: self-healing
+spec:
+  type: ClusterIP
+  selector:
+    app: self-healing
+  ports:
+    - port: 8080
+      targetPort: 8080

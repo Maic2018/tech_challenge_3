@@ -11,7 +11,7 @@ output "aws_region" {
 }
 
 output "eks_role_arn" {
-  value       = aws_iam_role.eks.arn
+  value       = local.eks_role_arn
   description = "Role associada ao cluster e aos nodes"
 }
 

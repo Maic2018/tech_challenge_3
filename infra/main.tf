@@ -73,7 +73,7 @@ module "eks" {
   project_name        = var.project_name
   cluster_name        = local.cluster_name
   cluster_version     = var.eks_version
-  role_arn            = aws_iam_role.eks.arn
+  role_arn            = local.eks_role_arn
   vpc_id              = module.network.vpc_id
   cluster_subnet_ids  = concat(module.network.public_subnet_ids, module.network.private_subnet_ids)
   node_subnet_ids     = module.network.private_subnet_ids

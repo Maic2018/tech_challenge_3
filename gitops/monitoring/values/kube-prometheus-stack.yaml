@@ -1,0 +1,142 @@
+# kube-prometheus-stack: Prometheus Operator + Prometheus + Grafana + kube-state-metrics
+# + node-exporter. Métricas de infraestrutura (cAdvisor/kubelet, nodes, objetos do K8s)
+# vêm dos scrapes padrão; as métricas das aplicações chegam do OTel Collector gateway
+# por remote write. Os alertas são gerenciados pelo Grafana (provisionados via
+# ConfigMap em gitops/monitoring/manifests), por isso o Alertmanager fica desligado.
+
+crds:
+  enabled: true
+
+# EKS: control plane gerenciado pela AWS, sem acesso a etcd/scheduler/controller-manager.
+# O kube-proxy do EKS publica métricas só em 127.0.0.1.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeProxy: false
+
+alertmanager:
+  enabled: false
+
+prometheusOperator:
+  # Os Jobs de patch dos webhooks são hooks do Helm; dispensáveis com GitOps
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+prometheus:
+  prometheusSpec:
+    # Endpoint /api/v1/write usado pelo exporter prometheusremotewrite do OTel gateway
+    enableRemoteWriteReceiver: true
+    scrapeInterval: 30s
+    retention: 2d
+    retentionSize: 4GB
+    # Seleciona ServiceMonitors/PodMonitors/regras de qualquer release
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1536Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 192Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 96Mi
+
+grafana:
+  # Usuário/senha gerados pelo Terraform (Secret grafana-admin)
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # PAGERDUTY_INTEGRATION_KEY, DISCORD_WEBHOOK_URL, SELF_HEALING_TOKEN e GF_SERVER_ROOT_URL,
+  # interpolados nos contact points provisionados (Secret criado pelo Terraform)
+  envFromSecret: grafana-alerting
+
+  # Publicado no Load Balancer do ingress-nginx em /grafana (sem LB extra).
+  # O ingress remove o prefixo; o Grafana só precisa saber dele para gerar links.
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana/"
+      serve_from_sub_path: false
+    analytics:
+      check_for_updates: false
+      reporting_enabled: false
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+    path: /grafana(/|$)(.*)
+    pathType: ImplementationSpecific
+    hosts: []
+
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      jsonData:
+        maxLines: 1000
+
+  # Pod de teste do Helm não tem papel no GitOps
+  testFramework:
+    enabled: false
+
+  sidecar:
+    datasources:
+      # Sem Alertmanager: o Grafana usa o próprio (unified alerting)
+      alertmanager:
+        enabled: false
+    dashboards:
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+    # Regras, contact points e políticas de notificação vêm de ConfigMaps com o label
+    # grafana_alert=1 (gitops/monitoring/manifests/grafana-alerting.yaml)
+    alerts:
+      enabled: true
+      label: grafana_alert
+      labelValue: "1"
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      memory: 512Mi

@@ -1,0 +1,15 @@
+# Manifestos "soltos" da stack de monitoramento (Application monitoring-config do ArgoCD):
+# dashboard do Grafana, alertas provisionados e o serviço de self-healing.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - grafana-dashboard-togglemaster.yaml
+  - grafana-alerting.yaml
+  - self-healing.yaml
+# O script vira ConfigMap com hash no nome: qualquer mudança no responder.py
+# gera um ConfigMap novo e reinicia o pod do self-healing automaticamente.
+configMapGenerator:
+  - name: self-healing-script
+    namespace: monitoring
+    files:
+      - self-healing/responder.py

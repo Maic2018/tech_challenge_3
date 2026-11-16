@@ -13,7 +13,7 @@ DELETE_BUCKET=0
 [ "${1:-}" = "--delete-state-bucket" ] && DELETE_BUCKET=1
 BUCKET="$(tfstate_bucket)"
 
-step "PASSO 1/4 — Plataforma (ArgoCD, Ingress NGINX, Metrics Server, Secrets)"
+step "PASSO 1/4 — Plataforma (ArgoCD, Ingress NGINX, Metrics Server, Secrets, observabilidade)"
 if aws s3api head-object --bucket "$BUCKET" --key platform/terraform.tfstate >/dev/null 2>&1; then
   bash scripts/tf-init.sh platform
   if terraform -chdir=infra/platform destroy -input=false -auto-approve; then

@@ -1,0 +1,29 @@
+# App-of-apps da Fase 4: cada arquivo em gitops/monitoring/apps é uma Application
+# (Helm charts do kube-prometheus-stack, Loki, OTel Collector gateway/agent e os
+# manifestos de dashboard, alertas e self-healing).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: togglemaster-monitoring
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: togglemaster
+spec:
+  project: default
+  source:
+    repoURL: ${repo_url}
+    targetRevision: ${revision}
+    path: gitops/monitoring/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

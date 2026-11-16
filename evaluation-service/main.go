@@ -9,12 +9,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/go-redis/redis/v8"
+	"github.com/aws/smithy-go/tracing/smithyoteltracing"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/extra/redisotel/v9"
+	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 )
-
-// Contexto global para o Redis
-var ctx = context.Background()
 
 // App struct para injeção de dependência
 type App struct {
@@ -60,14 +61,31 @@ func main() {
 		log.Fatal("AWS_REGION deve ser definida para usar SQS")
 	}
 
+	// --- OpenTelemetry ---
+	ctx := context.Background()
+	shutdownTelemetry, err := setupTelemetry(ctx, "evaluation-service")
+	if err != nil {
+		log.Fatalf("Não foi possível inicializar o OpenTelemetry: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			log.Printf("Erro ao encerrar o OpenTelemetry: %v", err)
+		}
+	}()
+
 	// --- Inicializa Clientes ---
 
-	// Cliente Redis
+	// Cliente Redis (cada comando vira um span CLIENT: cache HIT/MISS visível no trace)
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
 		log.Fatalf("Não foi possível parsear a URL do Redis: %v", err)
 	}
 	rdb := redis.NewClient(opt)
+	if err := redisotel.InstrumentTracing(rdb); err != nil {
+		log.Fatalf("Não foi possível instrumentar o Redis: %v", err)
+	}
 	if _, err := rdb.Ping(ctx).Result(); err != nil {
 		log.Fatalf("Não foi possível conectar ao Redis: %v", err)
 	}
@@ -81,13 +99,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("Não foi possível carregar a configuração AWS: %v", err)
 		}
-		sqsClient = sqs.NewFromConfig(cfg)
+		// Tracing nativo do AWS SDK: span CLIENT para cada chamada (SQS.SendMessage)
+		sqsClient = sqs.NewFromConfig(cfg, func(o *sqs.Options) {
+			o.TracerProvider = smithyoteltracing.Adapt(otel.GetTracerProvider())
+		})
 		log.Println("Cliente SQS inicializado com sucesso.")
 	}
 
-	// Cliente HTTP (com timeout)
+	// Cliente HTTP (com timeout). O transport do otelhttp cria o span CLIENT e injeta
+	// o header traceparent: é isso que liga evaluation -> flag/targeting -> auth no APM.
 	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:   5 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
 
 	// Cria a instância da App
@@ -105,10 +128,15 @@ func main() {
 	mux.HandleFunc("/health", app.healthHandler)
 	mux.HandleFunc("/evaluate", app.evaluationHandler)
 
+	handler := otelhttp.NewHandler(mux, "evaluation-service",
+		otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" }),
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string { return r.Method + " " + r.URL.Path }),
+	)
+
 	log.Printf("Serviço de Avaliação (Go) rodando na porta %s", port)
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

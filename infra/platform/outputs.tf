@@ -50,3 +50,23 @@ output "service_api_key" {
   value     = local.service_api_key
   sensitive = true
 }
+
+# ─── Fase 4 ─────────────────────────────────────────────────────────────────
+output "grafana_url" {
+  value       = "http://${try(data.kubernetes_service_v1.ingress_nginx.status[0].load_balancer[0].ingress[0].hostname, "pendente")}/grafana/"
+  description = "Grafana (usuário admin) publicado no Load Balancer do Ingress NGINX"
+}
+
+output "grafana_admin_password" {
+  value     = random_password.grafana_admin.result
+  sensitive = true
+}
+
+output "observability_integrations" {
+  value = {
+    new_relic = nonsensitive(var.new_relic_license_key != "") ? "configurado (${var.new_relic_otlp_endpoint})" : "NÃO configurado"
+    pagerduty = nonsensitive(var.pagerduty_integration_key != "") ? "configurado" : "NÃO configurado"
+    discord   = nonsensitive(var.discord_webhook_url != "") ? "configurado" : "NÃO configurado"
+  }
+  description = "Quais integrações externas receberam credencial"
+}

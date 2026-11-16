@@ -24,5 +24,13 @@ set_secret() { printf '%s' "${2%$'\r'}" | gh secret set "$1" --repo "$REPO"; }
 
 set_secret AWS_ACCESS_KEY_ID     "$AWS_ACCESS_KEY_ID"
 set_secret AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"
+# Credenciais temporárias (AWS Academy / STS) só funcionam com o session token.
+# Com chave permanente de IAM user, o secret fica vazio e o workflow o ignora.
+if [ -n "${AWS_SESSION_TOKEN:-}" ]; then
+  set_secret AWS_SESSION_TOKEN "$AWS_SESSION_TOKEN"
+  warn "Credenciais temporárias: rode este script de novo a cada nova sessão do AWS Academy."
+else
+  gh secret delete AWS_SESSION_TOKEN --repo "$REPO" >/dev/null 2>&1 || true
+fi
 log "Secrets AWS_* atualizados em $REPO."
 log "Opcional: 'gh secret set GITOPS_TOKEN' (PAT) se a branch main for protegida."

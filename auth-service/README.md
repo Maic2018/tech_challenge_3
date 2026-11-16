@@ -89,3 +89,16 @@ curl http://localhost:8001/validate \
 ```
 
 Saída esperada: `Chave de API inválida ou inativa`
+
+## 🔥 Injeção de falhas (Fase 4)
+
+Para demonstrar o alerta de 5xx e o self-healing, o serviço aceita uma falha controlada
+(protegida pela `MASTER_KEY`). O estado fica só na memória do pod, então um restart limpa a falha.
+
+```bash
+# 50% das chamadas a /validate passam a devolver HTTP 500
+curl -X POST http://localhost:8001/admin/chaos -H "Authorization: Bearer $MASTER_KEY" -d '{"error_rate": 50}'
+curl http://localhost:8001/admin/chaos -H "Authorization: Bearer $MASTER_KEY"   # estado atual
+```
+
+No cluster: `bash scripts/chaos-demo.sh 50` (veja `gitops/monitoring/README.md`).

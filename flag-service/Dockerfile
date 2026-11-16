@@ -15,7 +15,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /install /usr/local
-COPY app.py ./
+COPY app.py telemetry.py ./
 RUN useradd --create-home --uid 10001 appuser
 USER 10001
 EXPOSE 8002

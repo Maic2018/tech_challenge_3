@@ -1,0 +1,31 @@
+# Dashboard do Grafana, alertas provisionados e self-healing (kustomize em gitops/monitoring/manifests)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-config
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: togglemaster-monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Maic2018/tech_challenge_3.git
+    targetRevision: main
+    path: gitops/monitoring/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

@@ -1,0 +1,268 @@
+# Alertas gerenciados pelo Grafana (unified alerting), provisionados como código.
+# O sidecar do Grafana lê ConfigMaps com o label grafana_alert=1 e recarrega a config.
+#
+#  severity=critical ─▶ "oncall-critico": PagerDuty (incidente) + Discord + webhook de self-healing
+#  severity=warning  ─▶ "chatops-discord": só Discord (evita alert fatigue: não acorda ninguém)
+#
+# ${PAGERDUTY_INTEGRATION_KEY}, ${DISCORD_WEBHOOK_URL} e ${SELF_HEALING_TOKEN} são variáveis de
+# ambiente do Grafana (Secret grafana-alerting, criado pelo Terraform): nenhum segredo no git.
+# Por isso nenhum template deste arquivo usa "$" (o Grafana interpolaria como variável).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: togglemaster-alerting
+  namespace: monitoring
+  labels:
+    grafana_alert: "1"
+data:
+  togglemaster-alerting.yaml: |
+    apiVersion: 1
+
+    contactPoints:
+      - orgId: 1
+        name: oncall-critico
+        receivers:
+          - uid: tm-pagerduty
+            type: pagerduty
+            settings:
+              integrationKey: ${PAGERDUTY_INTEGRATION_KEY}
+              severity: critical
+              class: slo-erros-5xx
+              component: togglemaster
+              group: togglemaster
+          - uid: tm-discord-critico
+            type: discord
+            settings:
+              url: ${DISCORD_WEBHOOK_URL}
+              use_discord_username: false
+          - uid: tm-self-healing
+            type: webhook
+            settings:
+              url: http://self-healing.monitoring.svc.cluster.local:8080/hooks/alert
+              httpMethod: POST
+              authorization_scheme: Bearer
+              authorization_credentials: ${SELF_HEALING_TOKEN}
+      - orgId: 1
+        name: chatops-discord
+        receivers:
+          - uid: tm-discord-aviso
+            type: discord
+            settings:
+              url: ${DISCORD_WEBHOOK_URL}
+              use_discord_username: false
+
+    policies:
+      - orgId: 1
+        receiver: chatops-discord
+        group_by: [grafana_folder, alertname, service, service_name]
+        group_wait: 30s
+        group_interval: 2m
+        repeat_interval: 4h
+        routes:
+          - receiver: oncall-critico
+            object_matchers:
+              - ["severity", "=", "critical"]
+            group_wait: 10s
+            group_interval: 1m
+            repeat_interval: 30m
+
+    groups:
+      - orgId: 1
+        name: togglemaster-slo
+        folder: ToggleMaster
+        interval: 30s
+        rules:
+          # ── Alerta do enunciado: 5xx do auth-service > 5% ─────────────────────
+          # Fonte: métricas RED geradas dos traces pelo connector spanmetrics do OTel.
+          - uid: tm-auth-5xx
+            title: auth-service - erros HTTP 5xx acima de 5%
+            condition: C
+            dashboardUid: togglemaster-overview
+            panelId: 10
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  refId: A
+                  instant: true
+                  range: false
+                  expr: >-
+                    100 * (sum(rate(traces_span_metrics_calls_total{service_name="auth-service",
+                    span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1m])) or vector(0))
+                    / sum(rate(traces_span_metrics_calls_total{service_name="auth-service",
+                    span_kind="SPAN_KIND_SERVER"}[1m]))
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  refId: C
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params: [5]
+            for: 1m
+            noDataState: OK
+            # Prometheus fora do ar não pode virar "restart do auth-service"
+            execErrState: KeepLast
+            labels:
+              severity: critical
+              service: auth-service
+              team: togglemaster
+              remediation: rollout-restart
+            annotations:
+              summary: 'auth-service com {{ printf "%.1f" .Values.A.Value }}% de respostas HTTP 5xx (limite 5%)'
+              description: >-
+                A taxa de erros 5xx do auth-service passou de 5% por mais de 1 minuto. flag-service e
+                targeting-service dependem do /validate, então o evaluation-service também é afetado.
+                Ação automática: self-healing executa kubectl rollout restart deployment/auth-service.
+              runbook_url: https://github.com/Maic2018/tech_challenge_3/blob/main/gitops/monitoring/README.md#runbook-auth-service-5xx
+
+          # ── Demais serviços: só notificação no ChatOps ────────────────────────
+          - uid: tm-services-5xx
+            title: Microsserviço com erros HTTP 5xx acima de 5%
+            condition: C
+            dashboardUid: togglemaster-overview
+            panelId: 10
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  refId: A
+                  instant: true
+                  range: false
+                  expr: >-
+                    100 * (sum by (service_name) (rate(traces_span_metrics_calls_total{service_name!="auth-service",
+                    span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2m]))
+                    or 0 * sum by (service_name) (rate(traces_span_metrics_calls_total{service_name!="auth-service",
+                    span_kind="SPAN_KIND_SERVER"}[2m])))
+                    / sum by (service_name) (rate(traces_span_metrics_calls_total{service_name!="auth-service",
+                    span_kind="SPAN_KIND_SERVER"}[2m]))
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  refId: C
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params: [5]
+            for: 2m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+              team: togglemaster
+            annotations:
+              summary: '{{ index .Labels "service_name" }} com {{ printf "%.1f" .Values.A.Value }}% de respostas HTTP 5xx'
+              description: Taxa de erros 5xx acima de 5% por mais de 2 minutos. Veja os logs do serviço no dashboard (Loki) e o trace no New Relic.
+
+          # ── Lentidão do evaluation-service (o incidente do enunciado) ─────────
+          - uid: tm-eval-latency
+            title: evaluation-service - latência p95 acima de 500 ms
+            condition: C
+            dashboardUid: togglemaster-overview
+            panelId: 11
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  refId: A
+                  instant: true
+                  range: false
+                  expr: >-
+                    histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{
+                    service_name="evaluation-service", span_kind="SPAN_KIND_SERVER"}[5m])))
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  refId: C
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params: [500]
+            for: 5m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+              service: evaluation-service
+              team: togglemaster
+            annotations:
+              summary: 'p95 do evaluation-service em {{ printf "%.0f" .Values.A.Value }} ms (limite 500 ms)'
+              description: Requisições lentas no evaluation-service. Abra um trace lento no New Relic para ver qual dependência (Redis, flag, targeting, SQS) está demorando.
+
+          # ── HPA no limite: escalar não está resolvendo ────────────────────────
+          - uid: tm-hpa-max
+            title: HPA no número máximo de réplicas
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 600, to: 0}
+                datasourceUid: prometheus
+                model:
+                  refId: A
+                  instant: true
+                  range: false
+                  expr: >-
+                    100 * max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_current_replicas{namespace="togglemaster"})
+                    / max by (horizontalpodautoscaler) (kube_horizontalpodautoscaler_spec_max_replicas{namespace="togglemaster"})
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  refId: C
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params: [99]
+            for: 5m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+              team: togglemaster
+            annotations:
+              summary: '{{ index .Labels "horizontalpodautoscaler" }} está no máximo de réplicas há 5 minutos'
+              description: O autoscaling chegou ao teto. Se a taxa de erros também subiu, escalar não resolve a falha (foi o que aconteceu no incidente do evaluation-service).
+
+          # ── Contêineres reiniciando (CrashLoop) ───────────────────────────────
+          - uid: tm-pod-restarts
+            title: Contêiner reiniciando repetidamente
+            condition: C
+            data:
+              - refId: A
+                relativeTimeRange: {from: 900, to: 0}
+                datasourceUid: prometheus
+                model:
+                  refId: A
+                  instant: true
+                  range: false
+                  expr: >-
+                    sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace="togglemaster"}[15m]))
+              - refId: C
+                datasourceUid: __expr__
+                model:
+                  refId: C
+                  type: threshold
+                  expression: A
+                  conditions:
+                    - evaluator:
+                        type: gt
+                        params: [3]
+            for: 1m
+            noDataState: OK
+            execErrState: Error
+            labels:
+              severity: warning
+              team: togglemaster
+            annotations:
+              summary: '{{ index .Labels "pod" }} reiniciou mais de 3 vezes em 15 minutos'
+              description: Provável CrashLoopBackOff. Veja os logs do pod no Loki (dashboard ToggleMaster).

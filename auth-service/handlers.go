@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -49,11 +51,17 @@ func (a *App) validateKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Verifica se o hash existe no banco de dados
 	var id int
-	err := a.DB.QueryRow("SELECT id FROM api_keys WHERE key_hash = $1 AND is_active = true", keyHash).Scan(&id)
-	if err != nil {
-		// Se não encontrar (sql.ErrNoRows), ou qualquer outro erro, a chave é inválida
-		log.Printf("Falha na validação da chave (hash: %s...): %v", keyHash[:6], err)
+	err := a.DB.QueryRowContext(r.Context(), "SELECT id FROM api_keys WHERE key_hash = $1 AND is_active = true", keyHash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		log.Printf("trace_id=%s Chave inválida ou inativa (hash: %s...)", traceID(r.Context()), keyHash[:6])
 		http.Error(w, "Chave de API inválida ou inativa", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		// Banco indisponível não é "chave inválida": devolve 5xx para o erro aparecer
+		// nas métricas e disparar o alerta (antes virava 401 e a falha ficava silenciosa)
+		log.Printf("trace_id=%s ERRO ao consultar api_keys: %v", traceID(r.Context()), err)
+		http.Error(w, "Erro interno ao validar a chave", http.StatusInternalServerError)
 		return
 	}
 
@@ -89,13 +97,13 @@ func (a *App) createKeyHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Salva o hash no banco de dados
 	var newID int
-	err = a.DB.QueryRow(
+	err = a.DB.QueryRowContext(r.Context(),
 		"INSERT INTO api_keys (name, key_hash) VALUES ($1, $2) RETURNING id",
 		req.Name, newKeyHash,
 	).Scan(&newID)
 
 	if err != nil {
-		log.Printf("Erro ao salvar a chave no banco: %v", err)
+		log.Printf("trace_id=%s ERRO ao salvar a chave no banco: %v", traceID(r.Context()), err)
 		http.Error(w, "Erro ao salvar a chave", http.StatusInternalServerError)
 		return
 	}

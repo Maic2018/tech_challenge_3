@@ -9,11 +9,23 @@ import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from flask import Flask, jsonify
 from dotenv import load_dotenv
+from opentelemetry import propagate, trace
+from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
+from telemetry import setup_telemetry
+
+load_dotenv()
+
+# OpenTelemetry antes do logging (o formato de log passa a incluir trace_id/span_id)
+TELEMETRY_ENABLED = setup_telemetry("analytics-service")
+if TELEMETRY_ENABLED:
+    # Span CLIENT para cada chamada à AWS (SQS.ReceiveMessage, DynamoDB.PutItem...)
+    BotocoreInstrumentor().instrument()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
-
-load_dotenv()
+tracer = trace.get_tracer("analytics-service")
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 SQS_QUEUE_URL = os.getenv("AWS_SQS_URL")
@@ -69,7 +81,41 @@ def ensure_dynamodb_table():
             log.error(f"Erro ao criar tabela DynamoDB: {e}")
 
 
+def trace_context(message):
+    """Extrai o traceparent que o evaluation-service colocou nos MessageAttributes."""
+    carrier = {
+        key: attr["StringValue"]
+        for key, attr in message.get("MessageAttributes", {}).items()
+        if "StringValue" in attr
+    }
+    return propagate.extract(carrier)
+
+
 def process_message(message):
+    # Span CONSUMER filho do span PRODUCER do evaluation-service: o trace distribuído
+    # atravessa a fila e o APM liga evaluation-service -> analytics-service.
+    with tracer.start_as_current_span(
+        "evaluation-events process",
+        context=trace_context(message),
+        kind=SpanKind.CONSUMER,
+        attributes={
+            "messaging.system": "aws_sqs",
+            "messaging.operation.type": "process",
+            "messaging.destination.name": "evaluation-events",
+            "messaging.message.id": message['MessageId'],
+        },
+    ):
+        _process_message(message)
+
+
+def mark_span_error(error):
+    """Marca o span atual como erro (o trace fica vermelho no APM)."""
+    span = trace.get_current_span()
+    span.record_exception(error)
+    span.set_status(Status(StatusCode.ERROR, str(error)))
+
+
+def _process_message(message):
     try:
         log.info(f"Processando mensagem ID: {message['MessageId']}")
         body = json.loads(message['Body'])
@@ -92,11 +138,14 @@ def process_message(message):
             ReceiptHandle=message['ReceiptHandle']
         )
 
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        mark_span_error(e)
         log.error(f"Erro ao decodificar JSON da mensagem: {message['MessageId']}")
     except ClientError as e:
+        mark_span_error(e)
         log.error(f"Erro do Boto3 ao processar {message['MessageId']}: {e}")
     except Exception as e:
+        mark_span_error(e)
         log.error(f"Erro inesperado ao processar {message['MessageId']}: {e}")
 
 
@@ -111,7 +160,8 @@ def sqs_worker_loop():
             response = sqs_client.receive_message(
                 QueueUrl=SQS_QUEUE_URL,
                 MaxNumberOfMessages=10,
-                WaitTimeSeconds=20
+                WaitTimeSeconds=20,
+                MessageAttributeNames=['All'],  # traz o traceparent junto com a mensagem
             )
 
             messages = response.get('Messages', [])

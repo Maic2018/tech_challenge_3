@@ -41,6 +41,29 @@ spec:
           env:
             - name: PORT
               value: "8002"
+            # OpenTelemetry (Fase 4): o SDK envia traces e métricas ao OTel Collector gateway
+            - name: OTEL_SERVICE_NAME
+              value: flag-service
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: togglemaster-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              valueFrom:
+                configMapKeyRef:
+                  name: togglemaster-config
+                  key: OTEL_EXPORTER_OTLP_PROTOCOL
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: togglemaster-config
+                  key: OTEL_RESOURCE_ATTRIBUTES
+            - name: OTEL_SEMCONV_STABILITY_OPT_IN
+              valueFrom:
+                configMapKeyRef:
+                  name: togglemaster-config
+                  key: OTEL_SEMCONV_STABILITY_OPT_IN
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

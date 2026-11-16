@@ -4,3 +4,11 @@ psycopg2-binary==2.9.12
 gunicorn==26.2.0
 python-dotenv==1.2.3
 requests==2.34.2
+# OpenTelemetry (Fase 4): SDK + exportador OTLP/HTTP + instrumentações
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1
+opentelemetry-instrumentation-flask==0.66b1
+opentelemetry-instrumentation-requests==0.66b1
+opentelemetry-instrumentation-psycopg2==0.66b1
+opentelemetry-instrumentation-logging==0.66b1

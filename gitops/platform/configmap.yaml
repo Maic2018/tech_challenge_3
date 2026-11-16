@@ -9,3 +9,9 @@ data:
   TARGETING_SERVICE_URL: "http://targeting-service:8003"
   AWS_REGION: "us-east-1"
   AWS_DYNAMODB_TABLE: "ToggleMasterAnalytics"
+  # OpenTelemetry (Fase 4): destino OTLP/HTTP dos 5 microsserviços = OTel Collector gateway
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-gateway.monitoring.svc.cluster.local:4318"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  OTEL_RESOURCE_ATTRIBUTES: "service.namespace=togglemaster,deployment.environment=lab"
+  # Python: atributos HTTP na convenção estável (http.response.status_code), igual ao Go
+  OTEL_SEMCONV_STABILITY_OPT_IN: "http"

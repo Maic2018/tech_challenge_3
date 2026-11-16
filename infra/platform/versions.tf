@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# ToggleMaster – Plataforma no cluster (Fase 3)
+# ToggleMaster – Plataforma no cluster (Fases 3 e 4)
 # Segundo root module, aplicado DEPOIS de infra/: instala ArgoCD, ingress-nginx e
-# metrics-server via Helm, cria o namespace e os Secrets da aplicação a partir dos
+# metrics-server via Helm, cria os namespaces e os Secrets (aplicação e observabilidade) a partir dos
 # outputs do Terraform (nada de credencial em arquivo de texto) e registra as
 # Applications do ArgoCD que apontam para a pasta gitops/ deste repositório.
 # ─────────────────────────────────────────────────────────────────────────────

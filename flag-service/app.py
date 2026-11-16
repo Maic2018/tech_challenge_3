@@ -8,15 +8,31 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from functools import wraps
 import logging
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
+from telemetry import setup_telemetry
+
+# Carrega .env para desenvolvimento local
+load_dotenv()
+
+# OpenTelemetry antes do logging (o formato de log passa a incluir trace_id/span_id)
+TELEMETRY_ENABLED = setup_telemetry("flag-service")
 
 # Configura o logging
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# Carrega .env para desenvolvimento local
-load_dotenv()
-
 app = Flask(__name__)
+
+if TELEMETRY_ENABLED:
+    # Span SERVER por requisição (continua o traceparent do evaluation-service)
+    FlaskInstrumentor().instrument_app(app, excluded_urls="health")
+    # Span CLIENT + traceparent nas chamadas ao auth-service (/validate)
+    RequestsInstrumentor().instrument()
+    # Span CLIENT por query no PostgreSQL (precisa vir antes de criar o pool)
+    Psycopg2Instrumentor().instrument()
 
 # --- Configuração ---
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -29,7 +45,9 @@ if not DATABASE_URL or not AUTH_SERVICE_URL:
 # --- Pool de Conexão com o Banco ---
 # Inicializa o pool de conexões (Mín: 1, Máx: 5 conexões)
 try:
-    pool = SimpleConnectionPool(1, 5, dsn=DATABASE_URL)
+    # RealDictCursor definido no pool (e não em cada .cursor()): assim o instrumentor
+    # do psycopg2 consegue rastrear as queries sem mudar o formato das respostas.
+    pool = SimpleConnectionPool(1, 5, dsn=DATABASE_URL, cursor_factory=RealDictCursor)
     log.info("Pool de conexões com o PostgreSQL inicializado.")
 except psycopg2.OperationalError as e:
     log.critical(f"Erro fatal ao conectar ao PostgreSQL: {e}")
@@ -86,7 +104,7 @@ def create_flag():
     cur = None
     try:
         conn = pool.getconn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         cur.execute(
             "INSERT INTO flags (name, description, is_enabled, created_at, updated_at) "
             "VALUES (%s, %s, %s, NOW(), NOW()) RETURNING *",
@@ -120,7 +138,7 @@ def get_flags():
     cur = None
     try:
         conn = pool.getconn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         cur.execute("SELECT * FROM flags ORDER BY name")
         flags = cur.fetchall()
         return jsonify(flags)
@@ -141,7 +159,7 @@ def get_flag(name):
     cur = None
     try:
         conn = pool.getconn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         cur.execute("SELECT * FROM flags WHERE name = %s", (name,))
         flag = cur.fetchone()
         if not flag:
@@ -188,7 +206,7 @@ def update_flag(name):
     cur = None
     try:
         conn = pool.getconn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor()
         cur.execute(query, tuple(values))
 
         if cur.rowcount == 0:

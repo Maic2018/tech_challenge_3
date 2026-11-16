@@ -1,8 +1,9 @@
 #!/bin/bash
-# run-all.sh — Sobe o ambiente completo do zero (Fase 3):
+# run-all.sh — Sobe o ambiente completo do zero (Fases 3 e 4):
 #   backend S3 -> infra (Terraform) -> imagens via pipeline GitHub Actions ->
 #   plataforma (ArgoCD, Ingress, Metrics Server, Secrets via Terraform) ->
-#   migrations -> ArgoCD sincroniza os 5 microsserviços -> teste do fluxo.
+#   migrations -> ArgoCD sincroniza os 5 microsserviços e a stack de observabilidade
+#   (Prometheus, Grafana, Loki, OTel Collector, alertas, self-healing) -> teste do fluxo.
 # Nada é aplicado com kubectl apply a partir desta máquina: o deploy é GitOps.
 #
 # Uso: bash run-all.sh
@@ -10,6 +11,11 @@
 #                      SKIP_CI=1 (não dispara o pipeline; imagens já existem no ECR)
 #                      CI_REF=main (branch cujos workflows serão disparados)
 #                      GITOPS_REPO_TOKEN=... (repositório privado: token de leitura p/ ArgoCD)
+#   Fase 4 (credenciais das integrações; sem elas a stack sobe, só o envio externo falha):
+#                      NEW_RELIC_LICENSE_KEY=... (Ingest License Key do New Relic)
+#                      NEW_RELIC_OTLP_ENDPOINT=https://otlp.nr-data.net (conta EU: https://otlp.eu01.nr-data.net)
+#                      PAGERDUTY_INTEGRATION_KEY=... (Events API v2)
+#                      DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/scripts/common.sh"
 cd "$REPO_ROOT"
@@ -49,16 +55,26 @@ else
   read -r -p ">>> ENTER quando as imagens estiverem no ECR e a tag no gitops/ (Ctrl+C cancela)..."
 fi
 
-step "PASSO 6/8 — Plataforma: ArgoCD, Ingress NGINX, Metrics Server e Secrets (Terraform)"
+step "PASSO 6/8 — Plataforma: ArgoCD, Ingress NGINX, Metrics Server, Secrets e observabilidade (Terraform)"
 export TF_VAR_gitops_repo_token="${GITOPS_REPO_TOKEN:-}"
+export TF_VAR_new_relic_license_key="${NEW_RELIC_LICENSE_KEY:-}"
+export TF_VAR_new_relic_otlp_endpoint="${NEW_RELIC_OTLP_ENDPOINT:-https://otlp.nr-data.net}"
+export TF_VAR_pagerduty_integration_key="${PAGERDUTY_INTEGRATION_KEY:-}"
+export TF_VAR_discord_webhook_url="${DISCORD_WEBHOOK_URL:-}"
+for v in NEW_RELIC_LICENSE_KEY PAGERDUTY_INTEGRATION_KEY DISCORD_WEBHOOK_URL; do
+  [ -n "${!v:-}" ] || warn "$v não definida: a integração correspondente fica desativada (veja o README, Fase 4)."
+done
 bash scripts/tf-init.sh platform
 terraform -chdir=infra/platform apply -input=false -auto-approve
 
 step "PASSO 7/8 — Migrations SQL + registro da chave interna do evaluation-service"
 bash run-migrations.sh
 
-step "PASSO 8/8 — ArgoCD sincronizando os 5 microsserviços + teste do fluxo"
+step "PASSO 8/8 — ArgoCD sincronizando os 5 microsserviços e a observabilidade + teste do fluxo"
 bash scripts/wait-argocd-sync.sh
+APP_SELECTOR=app.kubernetes.io/part-of=togglemaster-monitoring EXPECTED_APPS=5 \
+  bash scripts/wait-argocd-sync.sh 1200 \
+  || warn "Stack de observabilidade ainda sincronizando. Acompanhe: bash scripts/monitoring-info.sh"
 APP_URL="$(terraform -chdir=infra/platform output -raw app_url)"
 bash scripts/get-api-key.sh >/dev/null
 bash test-fluxo-completo.sh "$APP_URL"
@@ -67,3 +83,5 @@ echo
 log "AMBIENTE COMPLETO."
 log "Aplicação: $APP_URL"
 bash scripts/argocd-info.sh
+bash scripts/monitoring-info.sh
+terraform -chdir=infra/platform output observability_integrations
