@@ -28,7 +28,7 @@ spec:
       containers:
         - name: auth-service
           # Atualizado automaticamente pelo pipeline de CI (scripts/update-image-tag.sh)
-          image: 319959509005.dkr.ecr.us-east-1.amazonaws.com/togglemaster/auth-service:v1.0.0-4a83445
+          image: 060733030753.dkr.ecr.us-east-1.amazonaws.com/togglemaster/auth-service:v1.0.0-d3869c0
           imagePullPolicy: Always
           ports:
             - containerPort: 8001
