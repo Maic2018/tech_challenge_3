@@ -43,12 +43,15 @@ rm -f account_id.txt api_key.txt infra/tfplan
 if [ "$DELETE_BUCKET" -eq 1 ]; then
   log "Removendo todas as versões dos objetos e o bucket $BUCKET..."
   TMP="$(mktemp)"
+  # No Git Bash o mktemp devolve /tmp/..., caminho que o aws.exe do Windows não enxerga
+  TMP_URI="$TMP"
+  command -v cygpath >/dev/null 2>&1 && TMP_URI="$(cygpath -m "$TMP")"
   for kind in Versions DeleteMarkers; do
     while :; do
       aws s3api list-object-versions --bucket "$BUCKET" --max-keys 500 --output json \
         --query "{Objects: ${kind}[].{Key:Key,VersionId:VersionId}, Quiet: \`true\`}" > "$TMP"
       grep -q '"Key"' "$TMP" || break
-      aws s3api delete-objects --bucket "$BUCKET" --delete "file://$TMP" >/dev/null
+      aws s3api delete-objects --bucket "$BUCKET" --delete "file://$TMP_URI" >/dev/null
     done
   done
   rm -f "$TMP"
